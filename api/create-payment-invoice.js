@@ -39,8 +39,14 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const country = req.headers["x-vercel-ip-country"] || "UNKNOWN";
-  const paymentBlocked = country === "US"; // 🔒 block payment only
+  const country = req.headers["x-vercel-ip-country"];
+
+  /**
+   * Block payment ONLY when:
+   * - country header exists
+   * - and it is explicitly "US"
+   */
+  const paymentBlocked = country === "US";
 
   const { amount, currency, description, quantity = 1 } = req.body;
 
