@@ -29,7 +29,7 @@ async function appendToGoogleSheets(row) {
       requestBody: { values: [row] }
     });
   } catch (err) {
-    console.error("Google Sheets error:", err);
+    console.error("Google Sheets append error:", err);
   }
 }
 
@@ -40,16 +40,16 @@ export default async function handler(req, res) {
   }
 
   const country = req.headers["x-vercel-ip-country"] || "UNKNOWN";
-  if (country === "US") {
-    return res.status(403).json({
-      error: "Payments are not available in your region."
-    });
-  }
+  const paymentBlocked = country === "US"; // 🔒 block payment only
 
   const { amount, currency, description, quantity = 1 } = req.body;
 
-  if (!amount || amount <= 0) {
+  if (!amount || typeof amount !== "number" || amount <= 0) {
     return res.status(400).json({ error: "Invalid amount" });
+  }
+
+  if (!currency || !description) {
+    return res.status(400).json({ error: "Missing required fields" });
   }
 
   const merchant_ref_id = `mw-${Date.now()}`;
@@ -59,44 +59,60 @@ export default async function handler(req, res) {
     currency,
     amount: amount.toString(),
     merchant_ref_id,
-    cart: [{
-      product_name: description,
-      qty_unit: quantity,
-      price_unit: (amount / quantity).toString()
-    }]
+    cart: [
+      {
+        product_name: description,
+        qty_unit: quantity,
+        price_unit: (amount / quantity).toString()
+      }
+    ]
   };
 
-  const response = await fetch(`${THIX_API_URL}/order/payment/create`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": THIX_API_KEY
-    },
-    body: JSON.stringify(payload)
-  });
+  let invoiceId = null;
 
-  const data = await response.json();
-  const invoiceId = data.invoice_id || data.invoice?.id || data.id;
+  try {
+    const response = await fetch(`${THIX_API_URL}/order/payment/create`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": THIX_API_KEY
+      },
+      body: JSON.stringify(payload)
+    });
 
-  if (!invoiceId) {
+    const data = await response.json();
+    invoiceId = data.invoice_id || data.invoice?.id || data.id;
+
+    if (!invoiceId) {
+      throw new Error("Invoice ID missing from 3Thix response");
+    }
+  } catch (err) {
+    console.error("3Thix error:", err);
     return res.status(500).json({ error: "Failed to create invoice" });
   }
 
-  res.status(200).json({ invoiceId, merchant_ref_id });
-
-  // Fire-and-forget ledger
-  appendToGoogleSheets([
-    merchant_ref_id,
-    description,
-    amount.toString(),
-    currency,
-    "INVOICE_CREATED",
-    "3THIX",
+  // ✅ Respond normally (NO 403)
+  res.status(200).json({
     invoiceId,
-    "0",
-    "",
-    "",
-    "",
-    new Date().toISOString()
-  ]);
+    merchant_ref_id,
+    paymentBlocked
+  });
+
+  // 🔁 Fire-and-forget ledger write
+  setImmediate(() => {
+    appendToGoogleSheets([
+      merchant_ref_id,
+      description,
+      amount.toString(),
+      currency,
+      "INVOICE_CREATED",
+      "3THIX",
+      invoiceId,
+      "0",
+      paymentBlocked ? "PAYMENT_BLOCKED_US" : "",
+      country,
+      "",
+      new Date().toISOString()
+    ]);
+  });
 }
