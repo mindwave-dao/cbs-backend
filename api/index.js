@@ -7,6 +7,7 @@ if (!process.env.THIX_API_KEY || !process.env.THIX_API_URL) {
 
 const express = require('express');
 const cors = require('cors');
+const fetch = global.fetch || require('node-fetch');
 
 const app = express();
 
@@ -27,15 +28,18 @@ app.get('/health', (req, res) => {
 
 app.post('/create-payment-invoice', async (req, res) => {
   try {
-    const country = req.headers['x-vercel-ip-country'];
+    const country = req.headers['x-vercel-ip-country'] || 'UNKNOWN';
+
     if (country === 'US') {
-      return res.status(403).json({ error: 'Payments are not available in your region.' });
+      return res.status(403).json({
+        error: 'Payments are not available in your region.'
+      });
     }
 
     const { amount, currency, description, quantity = 1 } = req.body;
 
     if (!amount || typeof amount !== 'number' || amount <= 0) {
-      return res.status(400).json({ error: 'Invalid amount: must be a number greater than 0' });
+      return res.status(400).json({ error: 'Invalid amount' });
     }
 
     if (!currency || typeof currency !== 'string') {
@@ -47,10 +51,10 @@ app.post('/create-payment-invoice', async (req, res) => {
     }
 
     if (typeof quantity !== 'number' || quantity <= 0) {
-      return res.status(400).json({ error: 'Invalid quantity: must be a number greater than 0' });
+      return res.status(400).json({ error: 'Invalid quantity' });
     }
 
-    const merchant_ref_id = Date.now().toString();
+    const merchant_ref_id = `mw-${Date.now()}`;
     const price_unit = amount / quantity;
 
     const payload = {
@@ -75,7 +79,7 @@ app.post('/create-payment-invoice', async (req, res) => {
     });
 
     if (!response.ok) {
-      console.error('3Thix API error:', response.status, response.statusText);
+      console.error('3Thix API error:', response.status);
       return res.status(500).json({ error: 'Payment gateway error' });
     }
 
@@ -83,14 +87,12 @@ app.post('/create-payment-invoice', async (req, res) => {
     const invoiceId = data.invoice_id || data.invoice?.id || data.id;
 
     if (!invoiceId) {
-      console.error('No invoice ID in response:', data);
+      console.error('Invalid 3Thix response:', data);
       return res.status(500).json({ error: 'Failed to create invoice' });
     }
 
-    res.json({
-      invoiceId,
-      merchant_ref_id
-    });
+    res.json({ invoiceId, merchant_ref_id });
+
   } catch (error) {
     console.error('Internal error:', error);
     res.status(500).json({ error: 'Internal server error' });
