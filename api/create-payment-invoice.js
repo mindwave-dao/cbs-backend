@@ -14,6 +14,7 @@ if (!THIX_API_KEY || !THIX_API_URL || !GOOGLE_SHEET_ID || !GOOGLE_SHEETS_CREDENT
 
 /* ---------- Google Sheets Setup ---------- */
 const credentials = JSON.parse(GOOGLE_SHEETS_CREDENTIALS);
+console.log("Sheets client email:", credentials.client_email);
 const auth = new google.auth.GoogleAuth({
   credentials,
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
@@ -22,6 +23,7 @@ const sheets = google.sheets({ version: "v4", auth });
 
 async function appendToGoogleSheets(row) {
   try {
+    console.log("Appending row:", row);
     await sheets.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
       range: "Transactions!A:L",
