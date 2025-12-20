@@ -13,6 +13,7 @@
     }
   ],
   "rewrites": [
-    { "source": "/health", "destination": "/api/health" }
+    { "source": "/health", "destination": "/api/health" },
+    { "source": "/payment-callback", "destination": "/api/payment-callback" }
   ]
 }
