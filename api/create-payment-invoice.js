@@ -8,24 +8,110 @@ const {
   GOOGLE_SHEETS_CREDENTIALS
 } = process.env;
 
-if (!THIX_API_KEY || !THIX_API_URL || !GOOGLE_SHEET_ID || !GOOGLE_SHEETS_CREDENTIALS) {
-  throw new Error("Missing required environment variables");
+/* ---------- CORS Setup ---------- */
+function setCorsHeaders(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Max-Age', '86400');
 }
 
-/* ---------- Google Sheets Setup ---------- */
-const credentials = JSON.parse(GOOGLE_SHEETS_CREDENTIALS);
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-const sheets = google.sheets({ version: "v4", auth });
+/* ---------- Google Sheets Setup (lazy init) ---------- */
+let sheets = null;
+
+function getGoogleSheets() {
+  if (sheets) return sheets;
+  
+  if (!GOOGLE_SHEETS_CREDENTIALS) {
+    console.warn("GOOGLE_SHEETS_CREDENTIALS not set, skipping sheets integration");
+    return null;
+  }
+  
+  try {
+    const credentials = JSON.parse(GOOGLE_SHEETS_CREDENTIALS);
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+    });
+    sheets = google.sheets({ version: "v4", auth });
+    return sheets;
+  } catch (err) {
+    console.error("Failed to initialize Google Sheets:", err);
+    return null;
+  }
+}
+
+// Header row for the Transactions sheet
+const SHEET_HEADERS = [
+  "Merchant Ref ID",
+  "Description",
+  "Amount",
+  "Currency",
+  "Status",
+  "Provider",
+  "Invoice ID",
+  "Fee",
+  "Blocked Status",
+  "Country",
+  "Notes",
+  "Timestamp"
+];
+
+async function ensureHeadersExist(sheetsClient) {
+  try {
+    // Check if row 1 has headers
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "Transactions!A1:L1"
+    });
+    
+    const existingHeaders = response.data.values?.[0];
+    
+    // If no headers or first cell is empty, add headers
+    if (!existingHeaders || !existingHeaders[0]) {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "Transactions!A1:L1",
+        valueInputOption: "RAW",
+        requestBody: { values: [SHEET_HEADERS] }
+      });
+      console.log("Added headers to Transactions sheet");
+    }
+  } catch (err) {
+    // If sheet doesn't exist or other error, try to add headers anyway
+    console.warn("Header check failed, attempting to add:", err.message);
+    try {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "Transactions!A1:L1",
+        valueInputOption: "RAW",
+        requestBody: { values: [SHEET_HEADERS] }
+      });
+    } catch (updateErr) {
+      console.error("Failed to add headers:", updateErr.message);
+    }
+  }
+}
+
+let headersInitialized = false;
 
 async function appendToGoogleSheets(row) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID) return;
+  
   try {
-    await sheets.spreadsheets.values.append({
+    // Ensure headers exist on first write
+    if (!headersInitialized) {
+      await ensureHeadersExist(sheetsClient);
+      headersInitialized = true;
+    }
+    
+    // Append data starting from row 2 onwards (after headers)
+    await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A:L",
+      range: "Transactions!A2:L",
       valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] }
     });
   } catch (err) {
@@ -35,8 +121,22 @@ async function appendToGoogleSheets(row) {
 
 /* ---------- API Handler ---------- */
 export default async function handler(req, res) {
+  // Set CORS headers for all requests
+  setCorsHeaders(res);
+
+  // Handle preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  // Validate required environment variables for payment
+  if (!THIX_API_KEY || !THIX_API_URL) {
+    console.error("Missing THIX_API_KEY or THIX_API_URL environment variables");
+    return res.status(500).json({ error: "Payment service not configured" });
   }
 
   const country = req.headers["x-vercel-ip-country"];
