@@ -1,18 +1,40 @@
 require('dotenv').config();
 
-if (!process.env.THIX_API_KEY || !process.env.THIX_API_URL) {
-  console.error('Missing required environment variables: THIX_API_KEY and THIX_API_URL');
+if (!process.env.THIX_API_KEY || !process.env.THIX_API_URL || !process.env.GOOGLE_SHEET_ID || !process.env.GOOGLE_SHEETS_CREDENTIALS) {
+  console.error('Missing required environment variables');
   process.exit(1);
 }
 
 const express = require('express');
 const cors = require('cors');
 const fetch = global.fetch || require('node-fetch');
+const { google } = require('googleapis');
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+async function appendToGoogleSheets(rowData) {
+  try {
+    const credentials = JSON.parse(process.env.GOOGLE_SHEETS_CREDENTIALS);
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+    const sheets = google.sheets({ version: 'v4', auth });
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: 'Transactions!A:L',
+      valueInputOption: 'RAW',
+      resource: {
+        values: [rowData]
+      }
+    });
+  } catch (error) {
+    console.error('Google Sheets append error:', error);
+  }
+}
 
 app.get('/', (req, res) => {
   res.type('text/plain').send('Mindwave Credits API is running');
@@ -92,6 +114,21 @@ app.post('/create-payment-invoice', async (req, res) => {
     }
 
     res.json({ invoiceId, merchant_ref_id });
+
+    appendToGoogleSheets([
+      merchant_ref_id,
+      description,
+      amount.toString(),
+      currency,
+      'INVOICE_CREATED',
+      '3THIX',
+      invoiceId,
+      '0',
+      '',
+      '',
+      '',
+      new Date().toISOString()
+    ]);
 
   } catch (error) {
     console.error('Internal error:', error);
