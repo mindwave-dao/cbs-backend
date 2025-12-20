@@ -1,0 +1,22 @@
+{
+  "name": "mindwave-credits-api",
+  "version": "1.0.0",
+  "description": "Mindwave Credits API backend service",
+  "main": "api/index.js",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "node api/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "vercel": "^33.0.0"
+  },
+  "private": true
+}
