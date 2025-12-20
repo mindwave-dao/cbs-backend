@@ -27,11 +27,6 @@ app.get('/health', (req, res) => {
 
 app.post('/create-payment-invoice', async (req, res) => {
   try {
-    const country = req.headers['x-vercel-ip-country'];
-    if (country === 'US') {
-      return res.status(403).json({ error: 'Payments are not available in your region.' });
-    }
-
     const { amount, currency, description, quantity = 1 } = req.body;
 
     if (!amount || typeof amount !== 'number' || amount <= 0) {
