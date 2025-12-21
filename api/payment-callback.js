@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import crypto from "crypto";
+import { sendPaymentSuccessEmail } from "../lib/email.js";
 
 const {
   GOOGLE_SHEET_ID,
@@ -338,6 +339,36 @@ function parseMetadata(metadata) {
   }
 }
 
+/**
+ * Check if a payment has already been recorded for this invoice (idempotency check)
+ * Returns the existing status if found, null if not found
+ */
+async function checkExistingPayment(invoiceId) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return null;
+  
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "Transactions!A2:L"  // Skip header row
+    });
+    
+    const rows = response.data.values || [];
+    
+    // Search for the invoice ID (column G = index 6)
+    for (const row of rows) {
+      if (row[6] === invoiceId) {
+        return row[4] || null;  // Return status (column E = index 4)
+      }
+    }
+    
+    return null;  // Not found
+  } catch (err) {
+    console.warn("Error checking existing payment:", err.message);
+    return null;  // Fail open - allow the payment to proceed
+  }
+}
+
 /* ---------- API Handler ---------- */
 export default async function handler(req, res) {
   setCorsHeaders(res);
@@ -426,6 +457,10 @@ export default async function handler(req, res) {
       });
     }
     
+    // Check if this payment was already recorded (idempotency)
+    const existingPaymentStatus = await checkExistingPayment(finalInvoiceId);
+    const isNewPayment = !existingPaymentStatus;
+    
     // Build notes based on status
     let notes = '';
     if (mappedStatus === 'FAILED' && finalErrorMessage) {
@@ -469,6 +504,20 @@ export default async function handler(req, res) {
           'SUCCESS',                       // status
           new Date().toISOString()         // created_at
         ]);
+      }
+      
+      // Send email notification only for new successful payments (idempotency)
+      if (isNewPayment && userEmail) {
+        // Non-blocking email send - failure does not affect payment flow
+        sendPaymentSuccessEmail({
+          to: userEmail,
+          name: userName,
+          amount: amount?.toString() || '',
+          currency: currency || '',
+          invoiceId: finalInvoiceId || ''
+        }).catch(err => {
+          console.error("Failed to send payment success email:", err.message);
+        });
       }
     }
     
