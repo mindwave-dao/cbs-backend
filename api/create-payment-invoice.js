@@ -1,9 +1,13 @@
 import fetch from "node-fetch";
+import { google } from "googleapis";
+import crypto from "crypto";
 
 const {
   THIX_API_KEY,
   THIX_API_URL,
-  VERCEL_URL
+  VERCEL_URL,
+  GOOGLE_SHEET_ID,
+  GOOGLE_SHEETS_CREDENTIALS
 } = process.env;
 
 /* ---------- CORS Setup ---------- */
@@ -12,6 +16,114 @@ function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
   res.setHeader('Access-Control-Max-Age', '86400');
+}
+
+/* ---------- Google Sheets Setup (lazy init) ---------- */
+let sheets = null;
+
+function getGoogleSheets() {
+  if (sheets) return sheets;
+  
+  if (!GOOGLE_SHEETS_CREDENTIALS) {
+    console.warn("GOOGLE_SHEETS_CREDENTIALS not set, skipping sheets integration");
+    return null;
+  }
+  
+  try {
+    const credentials = JSON.parse(GOOGLE_SHEETS_CREDENTIALS);
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+    });
+    sheets = google.sheets({ version: "v4", auth });
+    return sheets;
+  } catch (err) {
+    console.error("Failed to initialize Google Sheets:", err);
+    return null;
+  }
+}
+
+/* ---------- Activity Log Headers ---------- */
+const ACTIVITY_LOG_HEADERS = [
+  "Activity ID",
+  "Invoice ID",
+  "Merchant Ref ID",
+  "Event Type",
+  "Amount",
+  "Currency",
+  "Gateway",
+  "Country",
+  "User Agent",
+  "IP",
+  "Metadata",
+  "Timestamp"
+];
+
+let activityHeadersInitialized = false;
+
+async function ensureActivityLogHeaders(sheetsClient) {
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "TransactionActivityLog!A1:L1"
+    });
+    
+    const existingHeaders = response.data.values?.[0];
+    
+    if (!existingHeaders || !existingHeaders[0]) {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "TransactionActivityLog!A1:L1",
+        valueInputOption: "RAW",
+        requestBody: { values: [ACTIVITY_LOG_HEADERS] }
+      });
+      console.log("Added headers to TransactionActivityLog sheet");
+    }
+  } catch (err) {
+    console.warn("ActivityLog header check failed, attempting to add:", err.message);
+    try {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "TransactionActivityLog!A1:L1",
+        valueInputOption: "RAW",
+        requestBody: { values: [ACTIVITY_LOG_HEADERS] }
+      });
+    } catch (updateErr) {
+      console.error("Failed to add ActivityLog headers:", updateErr.message);
+    }
+  }
+}
+
+/**
+ * Append a row to TransactionActivityLog sheet
+ * Columns: activity_id, invoice_id, merchant_ref_id, event_type, amount, currency, 
+ *          gateway, country, user_agent, ip, metadata, timestamp
+ */
+async function appendToActivityLog(row) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID) {
+    console.warn("Google Sheets not configured, skipping activity log");
+    return;
+  }
+  
+  try {
+    if (!activityHeadersInitialized) {
+      await ensureActivityLogHeaders(sheetsClient);
+      activityHeadersInitialized = true;
+    }
+    
+    await sheetsClient.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "TransactionActivityLog!A:L",
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] }
+    });
+    console.log("Activity log entry added successfully");
+  } catch (err) {
+    console.error("Activity log append error:", err);
+    // Don't throw - activity logging should not block payment flow
+  }
 }
 
 /* ---------- API Handler ---------- */
@@ -34,7 +146,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Payment service not configured" });
   }
 
-  const country = req.headers["x-vercel-ip-country"];
+  const country = req.headers["x-vercel-ip-country"] || "";
+  const userAgent = req.headers["user-agent"] || "";
+  const ipAddress = req.headers["x-forwarded-for"]?.split(',')[0]?.trim() || 
+                    req.headers["x-real-ip"] || "";
 
   /**
    * Block payment ONLY when:
@@ -43,7 +158,8 @@ export default async function handler(req, res) {
    */
   const paymentBlocked = country === "US";
 
-  const { amount, currency, description, quantity = 1 } = req.body;
+  // Accept name and email for PaymentAdditionalInfo (stored in metadata)
+  const { amount, currency, description, quantity = 1, name, email } = req.body;
 
   if (!amount || typeof amount !== "number" || amount <= 0) {
     return res.status(400).json({ error: "Invalid amount" });
@@ -61,12 +177,20 @@ export default async function handler(req, res) {
     : 'http://localhost:3000';
   const callback_url = `${baseUrl}/api/payment-callback`;
 
+  // Store user info in metadata for retrieval during callback
+  const userMetadata = {
+    name: name || "",
+    email: email || "",
+    paymentBlocked
+  };
+
   const payload = {
     rail: "CREDIT_CARD",
     currency,
     amount: amount.toString(),
     merchant_ref_id,
     callback_url,
+    metadata: JSON.stringify(userMetadata),
     cart: [
       {
         product_name: description,
@@ -98,6 +222,23 @@ export default async function handler(req, res) {
     console.error("3Thix error:", err);
     return res.status(500).json({ error: "Failed to create invoice" });
   }
+
+  // Log INVOICE_CREATED event to TransactionActivityLog
+  // This guarantees every attempt is recorded, even if payment never happens
+  await appendToActivityLog([
+    crypto.randomUUID(),           // activity_id
+    invoiceId,                     // invoice_id
+    merchant_ref_id,               // merchant_ref_id
+    "INVOICE_CREATED",             // event_type
+    amount.toString(),             // amount
+    currency,                      // currency
+    "3THIX",                       // gateway
+    country,                       // country
+    userAgent,                     // user_agent
+    ipAddress,                     // ip
+    JSON.stringify(userMetadata),  // metadata (includes name, email, paymentBlocked)
+    new Date().toISOString()       // timestamp
+  ]);
 
   // ✅ Respond normally (NO 403)
   // Ledger will be updated via payment-callback when payment is completed/failed/timed out

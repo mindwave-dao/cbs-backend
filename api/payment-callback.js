@@ -1,4 +1,5 @@
 import { google } from "googleapis";
+import crypto from "crypto";
 
 const {
   GOOGLE_SHEET_ID,
@@ -39,7 +40,7 @@ function getGoogleSheets() {
   }
 }
 
-// Header row for the Transactions sheet
+/* ---------- Transactions Sheet (Main Ledger) ---------- */
 const SHEET_HEADERS = [
   "Merchant Ref ID",
   "Description",
@@ -54,6 +55,8 @@ const SHEET_HEADERS = [
   "Notes",
   "Timestamp"
 ];
+
+let headersInitialized = false;
 
 async function ensureHeadersExist(sheetsClient) {
   try {
@@ -88,8 +91,6 @@ async function ensureHeadersExist(sheetsClient) {
   }
 }
 
-let headersInitialized = false;
-
 async function appendToGoogleSheets(row) {
   const sheetsClient = getGoogleSheets();
   if (!sheetsClient || !GOOGLE_SHEET_ID) return;
@@ -111,6 +112,168 @@ async function appendToGoogleSheets(row) {
   } catch (err) {
     console.error("Google Sheets append error:", err);
     throw err;
+  }
+}
+
+/* ---------- TransactionActivityLog Sheet ---------- */
+const ACTIVITY_LOG_HEADERS = [
+  "Activity ID",
+  "Invoice ID",
+  "Merchant Ref ID",
+  "Event Type",
+  "Amount",
+  "Currency",
+  "Gateway",
+  "Country",
+  "User Agent",
+  "IP",
+  "Metadata",
+  "Timestamp"
+];
+
+let activityHeadersInitialized = false;
+
+async function ensureActivityLogHeaders(sheetsClient) {
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "TransactionActivityLog!A1:L1"
+    });
+    
+    const existingHeaders = response.data.values?.[0];
+    
+    if (!existingHeaders || !existingHeaders[0]) {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "TransactionActivityLog!A1:L1",
+        valueInputOption: "RAW",
+        requestBody: { values: [ACTIVITY_LOG_HEADERS] }
+      });
+      console.log("Added headers to TransactionActivityLog sheet");
+    }
+  } catch (err) {
+    console.warn("ActivityLog header check failed, attempting to add:", err.message);
+    try {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "TransactionActivityLog!A1:L1",
+        valueInputOption: "RAW",
+        requestBody: { values: [ACTIVITY_LOG_HEADERS] }
+      });
+    } catch (updateErr) {
+      console.error("Failed to add ActivityLog headers:", updateErr.message);
+    }
+  }
+}
+
+/**
+ * Append a row to TransactionActivityLog sheet
+ * Event types: INVOICE_CREATED, REDIRECT_INITIATED, PAYMENT_ABANDONED, 
+ *              PAYMENT_SUCCESS, PAYMENT_FAILED, PAYMENT_CANCELLED, 
+ *              PAYMENT_TIMEOUT, WEBHOOK_RECEIVED
+ */
+async function appendToActivityLog(row) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID) {
+    console.warn("Google Sheets not configured, skipping activity log");
+    return;
+  }
+  
+  try {
+    if (!activityHeadersInitialized) {
+      await ensureActivityLogHeaders(sheetsClient);
+      activityHeadersInitialized = true;
+    }
+    
+    await sheetsClient.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "TransactionActivityLog!A:L",
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] }
+    });
+    console.log("Activity log entry added successfully");
+  } catch (err) {
+    console.error("Activity log append error:", err);
+    // Don't throw - activity logging should not block payment flow
+  }
+}
+
+/* ---------- PaymentAdditionalInfo Sheet ---------- */
+const ADDITIONAL_INFO_HEADERS = [
+  "Invoice ID",
+  "Merchant Ref ID",
+  "Name",
+  "Email",
+  "Amount",
+  "Currency",
+  "Status",
+  "Created At"
+];
+
+let additionalInfoHeadersInitialized = false;
+
+async function ensureAdditionalInfoHeaders(sheetsClient) {
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "PaymentAdditionalInfo!A1:H1"
+    });
+    
+    const existingHeaders = response.data.values?.[0];
+    
+    if (!existingHeaders || !existingHeaders[0]) {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "PaymentAdditionalInfo!A1:H1",
+        valueInputOption: "RAW",
+        requestBody: { values: [ADDITIONAL_INFO_HEADERS] }
+      });
+      console.log("Added headers to PaymentAdditionalInfo sheet");
+    }
+  } catch (err) {
+    console.warn("AdditionalInfo header check failed, attempting to add:", err.message);
+    try {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "PaymentAdditionalInfo!A1:H1",
+        valueInputOption: "RAW",
+        requestBody: { values: [ADDITIONAL_INFO_HEADERS] }
+      });
+    } catch (updateErr) {
+      console.error("Failed to add AdditionalInfo headers:", updateErr.message);
+    }
+  }
+}
+
+/**
+ * Append a row to PaymentAdditionalInfo sheet
+ * Only for successful payments - stores user-submitted info
+ */
+async function appendToAdditionalInfo(row) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID) {
+    console.warn("Google Sheets not configured, skipping additional info");
+    return;
+  }
+  
+  try {
+    if (!additionalInfoHeadersInitialized) {
+      await ensureAdditionalInfoHeaders(sheetsClient);
+      additionalInfoHeadersInitialized = true;
+    }
+    
+    await sheetsClient.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "PaymentAdditionalInfo!A:H",
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] }
+    });
+    console.log("Additional info entry added successfully");
+  } catch (err) {
+    console.error("Additional info append error:", err);
+    // Don't throw - additional info logging should not block payment flow
   }
 }
 
@@ -141,12 +304,38 @@ function mapPaymentStatus(thixStatus) {
 }
 
 /**
+ * Map status to activity log event type
+ */
+function mapStatusToEventType(status) {
+  const eventMap = {
+    'SUCCESS': 'PAYMENT_SUCCESS',
+    'FAILED': 'PAYMENT_FAILED',
+    'TIMEOUT': 'PAYMENT_TIMEOUT',
+    'CANCELLED': 'PAYMENT_CANCELLED'
+  };
+  return eventMap[status] || 'WEBHOOK_RECEIVED';
+}
+
+/**
  * Check if status is one we should record in ledger
  * Only record final states: success, failed, timeout, cancelled
  */
 function shouldRecordStatus(status) {
   const recordableStatuses = ['SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELLED'];
   return recordableStatuses.includes(status);
+}
+
+/**
+ * Parse metadata from callback - may be JSON string or object
+ */
+function parseMetadata(metadata) {
+  if (!metadata) return {};
+  if (typeof metadata === 'object') return metadata;
+  try {
+    return JSON.parse(metadata);
+  } catch {
+    return {};
+  }
 }
 
 /* ---------- API Handler ---------- */
@@ -184,13 +373,15 @@ export default async function handler(req, res) {
       error_message,
       errorMessage,
       description,
-      country
+      country,
+      metadata
     } = data;
     
     const finalInvoiceId = invoice_id || invoiceId;
     const finalMerchantRefId = merchant_ref_id || merchantRefId;
     const finalStatus = status || payment_status;
     const finalErrorMessage = error_message || errorMessage;
+    const parsedMetadata = parseMetadata(metadata);
     
     if (!finalInvoiceId && !finalMerchantRefId) {
       console.error("Missing invoice_id and merchant_ref_id in callback");
@@ -206,8 +397,25 @@ export default async function handler(req, res) {
     
     // Map the status to our internal representation
     const mappedStatus = mapPaymentStatus(finalStatus);
+    const eventType = mapStatusToEventType(mappedStatus);
     
-    // Only record to ledger if it's a final status
+    // Log to TransactionActivityLog (all events, always)
+    await appendToActivityLog([
+      crypto.randomUUID(),                              // activity_id
+      finalInvoiceId || '',                             // invoice_id
+      finalMerchantRefId || '',                         // merchant_ref_id
+      eventType,                                        // event_type
+      amount?.toString() || '',                         // amount
+      currency || '',                                   // currency
+      "3THIX",                                          // gateway
+      country || '',                                    // country
+      '',                                               // user_agent (not available in callback)
+      '',                                               // ip (not available in callback)
+      JSON.stringify({ originalStatus: finalStatus, error: finalErrorMessage || null }),  // metadata
+      new Date().toISOString()                          // timestamp
+    ]);
+    
+    // Only record to main ledger if it's a final status
     if (!shouldRecordStatus(mappedStatus)) {
       console.log(`Status ${finalStatus} (mapped: ${mappedStatus}) is not a final status, skipping ledger update`);
       return res.status(200).json({ 
@@ -228,7 +436,7 @@ export default async function handler(req, res) {
       notes = 'User cancelled payment';
     }
     
-    // Append to Google Sheets ledger
+    // Append to Google Sheets ledger (main Transactions sheet)
     await appendToGoogleSheets([
       finalMerchantRefId || '',
       description || '',
@@ -238,11 +446,31 @@ export default async function handler(req, res) {
       "3THIX",
       finalInvoiceId || '',
       fee?.toString() || '0',
-      '',
+      parsedMetadata.paymentBlocked ? 'BLOCKED' : '',
       country || '',
       notes,
       new Date().toISOString()
     ]);
+    
+    // On successful payment, also write to PaymentAdditionalInfo
+    if (mappedStatus === 'SUCCESS') {
+      const userName = parsedMetadata.name || '';
+      const userEmail = parsedMetadata.email || '';
+      
+      // Only write if we have at least some user info
+      if (userName || userEmail) {
+        await appendToAdditionalInfo([
+          finalInvoiceId || '',           // invoice_id
+          finalMerchantRefId || '',       // merchant_ref_id
+          userName,                        // name
+          userEmail,                       // email
+          amount?.toString() || '',        // amount
+          currency || '',                  // currency
+          'SUCCESS',                       // status
+          new Date().toISOString()         // created_at
+        ]);
+      }
+    }
     
     console.log(`Payment callback processed: ${finalInvoiceId} - ${mappedStatus}`);
     
