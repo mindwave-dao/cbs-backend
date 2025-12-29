@@ -1,6 +1,7 @@
 import fetch from "node-fetch";
 import { google } from "googleapis";
 import crypto from "crypto";
+import { isGeoRestricted } from "../lib/geo.js";
 
 const {
   THIX_API_KEY,
@@ -148,13 +149,11 @@ export default async function handler(req, res) {
 
   const country = req.headers["x-vercel-ip-country"] || "";
   const userAgent = req.headers["user-agent"] || "";
-  const ipAddress = req.headers["x-forwarded-for"]?.split(',')[0]?.trim() || 
+  const ipAddress = req.headers["x-forwarded-for"]?.split(',')[0]?.trim() ||
                     req.headers["x-real-ip"] || "";
 
   /**
-   * Block payment ONLY when:
-   * - country header exists
-   * - and it is explicitly "US"
+   * Block payment ONLY when country is "US"
    */
   const paymentBlocked = country === "US";
 
