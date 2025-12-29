@@ -1,17 +1,22 @@
-import { NextResponse } from 'next/server';
-
-export function middleware(request) {
+export default function middleware(request) {
   const country =
     request.geo?.country ||
     request.headers.get("x-vercel-ip-country");
 
+  // Block ONLY U.S. users
   if (country === "US") {
-    return NextResponse.redirect(new URL('/restricted', request.url));
+    return new Response(null, {
+      status: 307,
+      headers: {
+        Location: "/restricted",
+      },
+    });
   }
 
-  return NextResponse.next();
+  // Allow all other countries (including CA and unknown)
+  return;
 }
 
 export const config = {
-  matcher: '/((?!api|_next/static|_next/image|favicon.ico).*)',
+  matcher: ["/buy", "/checkout", "/api/:path*"],
 };
