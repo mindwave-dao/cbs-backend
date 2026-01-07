@@ -14,6 +14,7 @@
   ],
   "rewrites": [
     { "source": "/health", "destination": "/api/health" },
-    { "source": "/payment-callback", "destination": "/api/payment-callback" }
+    { "source": "/payment-callback", "destination": "/api/payment-callback" },
+    { "source": "/api/webhooks/3thix", "destination": "/api/webhooks/3thix" }
   ]
 }

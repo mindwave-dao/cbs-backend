@@ -44,20 +44,95 @@ function getGoogleSheets() {
   }
 }
 
+/* ---------- Transactions Sheet (Main Ledger) ---------- */
+const SHEET_HEADERS = [
+  "merchant_ref_id",
+  "description",
+  "amount",
+  "currency",
+  "status",
+  "gateway",
+  "invoice_id",
+  "tokens_issued",
+  "flags",
+  "country",
+  "notes",
+  "timestamp"
+];
+
+let headersInitialized = false;
+
+async function ensureHeadersExist(sheetsClient) {
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "Transactions!A1:L1"
+    });
+
+    const existingHeaders = response.data.values?.[0];
+
+    if (!existingHeaders || !existingHeaders[0]) {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "Transactions!A1:L1",
+        valueInputOption: "RAW",
+        requestBody: { values: [SHEET_HEADERS] }
+      });
+      console.log("Added headers to Transactions sheet");
+    }
+  } catch (err) {
+    console.warn("Header check failed, attempting to add:", err.message);
+    try {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "Transactions!A1:L1",
+        valueInputOption: "RAW",
+        requestBody: { values: [SHEET_HEADERS] }
+      });
+    } catch (updateErr) {
+      console.error("Failed to add headers:", updateErr.message);
+    }
+  }
+}
+
+async function appendToGoogleSheets(row) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID) return;
+
+  try {
+    if (!headersInitialized) {
+      await ensureHeadersExist(sheetsClient);
+      headersInitialized = true;
+    }
+
+    await sheetsClient.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "Transactions!A2:L",
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] }
+    });
+    console.log("Ledger entry added successfully");
+  } catch (err) {
+    console.error("Google Sheets append error:", err);
+    throw err;
+  }
+}
+
 /* ---------- Activity Log Headers ---------- */
 const ACTIVITY_LOG_HEADERS = [
-  "Activity ID",
-  "Invoice ID",
-  "Merchant Ref ID",
-  "Event Type",
-  "Amount",
-  "Currency",
-  "Gateway",
-  "Country",
-  "User Agent",
-  "IP",
-  "Metadata",
-  "Timestamp"
+  "activity_id",
+  "invoice_id",
+  "merchant_ref_id",
+  "event_type",
+  "amount",
+  "currency",
+  "gateway",
+  "country",
+  "user_agent",
+  "ip",
+  "metadata",
+  "timestamp"
 ];
 
 let activityHeadersInitialized = false;
@@ -158,7 +233,8 @@ export default async function handler(req, res) {
   const paymentBlocked = country === "US";
 
   // Accept name and email for PaymentAdditionalInfo (stored in metadata)
-  const { amount, currency, description, quantity = 1, name, email } = req.body;
+  const { amount, currency, quantity = 1, name, email } = req.body;
+  const description = "NILA TOKEN - Mindwave";
 
   if (!amount || typeof amount !== "number" || amount <= 0) {
     return res.status(400).json({ error: "Invalid amount" });
@@ -174,7 +250,7 @@ export default async function handler(req, res) {
   const baseUrl = VERCEL_URL
     ? `https://${VERCEL_URL}`
     : 'http://localhost:3000';
-  const callback_url = `${baseUrl}/api/payment-callback`;
+  const callback_url = `${baseUrl}/api/webhooks/3thix`;
 
   // Store user info in metadata for retrieval during callback
   const userMetadata = {
@@ -238,6 +314,40 @@ export default async function handler(req, res) {
     JSON.stringify(userMetadata),  // metadata (includes name, email, paymentBlocked)
     new Date().toISOString()       // timestamp
   ]);
+
+  // Write to Transactions sheet with INVOICE_CREATED status
+  await appendToGoogleSheets([
+    merchant_ref_id,
+    description,
+    amount.toString(),
+    currency,
+    "INVOICE_CREATED",
+    "3THIX",
+    invoiceId,
+    "", // tokens_issued
+    paymentBlocked ? "PAYMENT_BLOCKED_US" : "",
+    country,
+    "", // notes
+    new Date().toISOString()
+  ]);
+
+  // If payment blocked, log PAYMENT_BLOCKED_US event
+  if (paymentBlocked) {
+    await appendToActivityLog([
+      crypto.randomUUID(),
+      invoiceId,
+      merchant_ref_id,
+      "PAYMENT_BLOCKED_US",
+      amount.toString(),
+      currency,
+      "3THIX",
+      country,
+      userAgent,
+      ipAddress,
+      JSON.stringify({ blocked: true }),
+      new Date().toISOString()
+    ]);
+  }
 
   // ✅ Respond normally (NO 403)
   // Ledger will be updated via payment-callback when payment is completed/failed/timed out

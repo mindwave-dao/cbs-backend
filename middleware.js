@@ -18,5 +18,5 @@ export default function middleware(request) {
 }
 
 export const config = {
-  matcher: ["/buy", "/checkout", "/api/:path*"],
+  matcher: ["/buy", "/checkout"],
 };

@@ -12,7 +12,7 @@ const {
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Webhook-Signature');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Webhook-Signature');
   res.setHeader('Access-Control-Max-Age', '86400');
 }
 
@@ -43,18 +43,18 @@ function getGoogleSheets() {
 
 /* ---------- Transactions Sheet (Main Ledger) ---------- */
 const SHEET_HEADERS = [
-  "Merchant Ref ID",
-  "Description",
-  "Amount",
-  "Currency",
-  "Status",
-  "Provider",
-  "Invoice ID",
-  "Fee",
-  "Blocked Status",
-  "Country",
-  "Notes",
-  "Timestamp"
+  "merchant_ref_id",
+  "description",
+  "amount",
+  "currency",
+  "status",
+  "gateway",
+  "invoice_id",
+  "tokens_issued",
+  "flags",
+  "country",
+  "notes",
+  "timestamp"
 ];
 
 let headersInitialized = false;
@@ -118,18 +118,18 @@ async function appendToGoogleSheets(row) {
 
 /* ---------- TransactionActivityLog Sheet ---------- */
 const ACTIVITY_LOG_HEADERS = [
-  "Activity ID",
-  "Invoice ID",
-  "Merchant Ref ID",
-  "Event Type",
-  "Amount",
-  "Currency",
-  "Gateway",
-  "Country",
-  "User Agent",
-  "IP",
-  "Metadata",
-  "Timestamp"
+  "activity_id",
+  "invoice_id",
+  "merchant_ref_id",
+  "event_type",
+  "amount",
+  "currency",
+  "gateway",
+  "country",
+  "user_agent",
+  "ip",
+  "metadata",
+  "timestamp"
 ];
 
 let activityHeadersInitialized = false;
@@ -169,9 +169,9 @@ async function ensureActivityLogHeaders(sheetsClient) {
 
 /**
  * Append a row to TransactionActivityLog sheet
- * Event types: INVOICE_CREATED, REDIRECT_INITIATED, PAYMENT_ABANDONED, 
- *              PAYMENT_SUCCESS, PAYMENT_FAILED, PAYMENT_CANCELLED, 
- *              PAYMENT_TIMEOUT, WEBHOOK_RECEIVED
+ * Event types: INVOICE_CREATED, PAYMENT_REDIRECTED, PAYMENT_BLOCKED_US,
+ *              WEBHOOK_RECEIVED, PAYMENT_SUCCESS, PAYMENT_FAILED,
+ *              PAYMENT_CANCELLED, PAYMENT_TIMEOUT
  */
 async function appendToActivityLog(row) {
   const sheetsClient = getGoogleSheets();
@@ -202,14 +202,14 @@ async function appendToActivityLog(row) {
 
 /* ---------- PaymentAdditionalInfo Sheet ---------- */
 const ADDITIONAL_INFO_HEADERS = [
-  "Invoice ID",
-  "Merchant Ref ID",
-  "Name",
-  "Email",
-  "Amount",
-  "Currency",
-  "Status",
-  "Created At"
+  "invoice_id",
+  "merchant_ref_id",
+  "name",
+  "email",
+  "amount",
+  "currency",
+  "status",
+  "created_at"
 ];
 
 let additionalInfoHeadersInitialized = false;
@@ -480,18 +480,18 @@ export default async function handler(req, res) {
 
     // Append to Google Sheets ledger (main Transactions sheet)
     await appendToGoogleSheets([
-      finalMerchantRefId || '',
-      description || '',
-      amount?.toString() || '',
-      currency || '',
-      mappedStatus,
-      "3THIX",
-      finalInvoiceId || '',
-      fee?.toString() || '0',
-      parsedMetadata.paymentBlocked ? 'BLOCKED' : '',
-      country || '',
-      notes,
-      new Date().toISOString()
+      finalMerchantRefId || '',        // merchant_ref_id
+      description || '',               // description
+      amount?.toString() || '',        // amount
+      currency || '',                  // currency
+      mappedStatus,                    // status
+      "3THIX",                         // gateway
+      finalInvoiceId || '',            // invoice_id
+      '',                              // tokens_issued (empty)
+      parsedMetadata.paymentBlocked ? 'PAYMENT_BLOCKED_US' : '',  // flags
+      country || '',                   // country
+      notes,                           // notes
+      new Date().toISOString()         // timestamp
     ]);
 
     // On successful payment, also write to PaymentAdditionalInfo

@@ -40,19 +40,19 @@ function getGoogleSheets() {
 
 /**
  * Find payment status by invoice ID in Google Sheets
- * Sheet columns (based on payment-callback.js):
- * A: Merchant Ref ID
- * B: Description
- * C: Amount
- * D: Currency
- * E: Status
- * F: Provider
- * G: Invoice ID
- * H: Fee
- * I: Blocked Status
- * J: Country
- * K: Notes
- * L: Timestamp
+ * Transactions sheet columns:
+ * A: merchant_ref_id
+ * B: description
+ * C: amount
+ * D: currency
+ * E: status
+ * F: gateway
+ * G: invoice_id
+ * H: tokens_issued
+ * I: flags
+ * J: country
+ * K: notes
+ * L: timestamp
  */
 async function findPaymentStatus(invoiceId) {
   const sheetsClient = getGoogleSheets();
