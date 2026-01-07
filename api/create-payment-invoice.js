@@ -340,7 +340,7 @@ export default async function handler(req, res) {
     amount: amount.toString(),
     merchant_ref_id,
     callback_url,
-    return_url, // 👈 dynamic
+    return_url: encodeURIComponent(return_url), // IMPORTANT: encode, but do NOT alter
     metadata: JSON.stringify(userMetadata),
     cart: [
       {
