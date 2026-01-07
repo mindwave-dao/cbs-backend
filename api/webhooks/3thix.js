@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import crypto from "crypto";
-import { sendPaymentSuccessEmail, sendAdminEmail } from "../lib/email.js";
+import { triggerEmailsAfterLedgerUpdate } from "../lib/email.js";
 
 const {
   GOOGLE_SHEET_ID,
@@ -594,55 +594,16 @@ export default async function handler(req, res) {
         ]);
       }
 
-      // Check if email has already been sent (retry-safe)
-      const emailAlreadySent = await checkEmailSent(finalInvoiceId);
-
-      // Send email notification for successful payments (retry-safe)
-      console.log("EMAIL CHECK:", {
+      // Trigger emails immediately after successful ledger update
+      await triggerEmailsAfterLedgerUpdate({
+        invoiceId: finalInvoiceId,
         status: mappedStatus,
-        email: userEmail,
-        emailSentFlag: emailAlreadySent
+        emailSent: '',  // New ledger entry, so email not sent yet
+        userEmail: userEmail,
+        userName: userName,
+        amount: amount,
+        currency: currency
       });
-
-      if (userEmail && emailAlreadySent !== 'YES') {
-        console.log(`Sending emails for invoice ${finalInvoiceId}`);
-
-        // Non-blocking email send - failure does not affect payment flow
-        const userEmailPromise = sendPaymentSuccessEmail({
-          to: userEmail,
-          name: userName,
-          amount: amount?.toString() || '',
-          currency: currency || '',
-          invoiceId: finalInvoiceId || ''
-        }).catch(err => {
-          console.error("Failed to send payment success email:", err.message);
-          return false;
-        });
-
-        // Send admin notification email
-        const adminEmailPromise = sendAdminEmail({
-          name: userName,
-          userEmail: userEmail,
-          invoiceId: finalInvoiceId || '',
-          amount: amount?.toString() || '',
-          currency: currency || ''
-        }).catch(err => {
-          console.error("Failed to send admin email:", err.message);
-          return false;
-        });
-
-        // Wait for both emails to complete (but don't block on failure)
-        const [userEmailSent, adminEmailSent] = await Promise.all([userEmailPromise, adminEmailPromise]);
-
-        // Mark email as sent in Google Sheets if at least one email was sent successfully
-        if (userEmailSent || adminEmailSent) {
-          await markEmailAsSent(finalInvoiceId);
-        }
-
-        console.log(`Email sending completed for invoice ${finalInvoiceId}: user=${userEmailSent}, admin=${adminEmailSent}`);
-      } else if (emailAlreadySent === 'YES') {
-        console.log(`Email already sent for invoice ${finalInvoiceId}. Skipping.`);
-      }
     }
 
     console.log(`Payment callback processed: ${finalInvoiceId} - ${mappedStatus}`);

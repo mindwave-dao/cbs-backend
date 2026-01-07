@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { sendPaymentSuccessEmail, sendAdminEmail } from "../lib/email.js";
+import { triggerEmailsAfterLedgerUpdate } from "../lib/email.js";
 
 const {
   GOOGLE_SHEET_ID,
@@ -243,56 +243,24 @@ export default async function handler(req, res) {
 
     console.log(`Payment status for ${invoiceId}: ${result.status}`);
 
-    // Check if we need to trigger emails for successful payments (fallback mechanism)
+    // Trigger emails immediately after finding successful payment in ledger
     if (result.status === 'SUCCESS' && result.found) {
+      // Get current email status from ledger
       const emailAlreadySent = await checkEmailSent(invoiceId);
 
-      if (emailAlreadySent !== 'YES') {
-        console.log(`Fallback: Sending emails for invoice ${invoiceId}`);
+      // Get user info from PaymentAdditionalInfo sheet
+      const { name: userName, email: userEmail } = await getUserInfo(invoiceId);
 
-        // Get user info from PaymentAdditionalInfo sheet
-        const { name: userName, email: userEmail } = await getUserInfo(invoiceId);
-
-        if (userEmail) {
-          // Non-blocking email send - failure does not affect status check
-          const userEmailPromise = sendPaymentSuccessEmail({
-            to: userEmail,
-            name: userName,
-            amount: result.amount || '',
-            currency: result.currency || '',
-            invoiceId: invoiceId
-          }).catch(err => {
-            console.error("Failed to send payment success email:", err.message);
-            return false;
-          });
-
-          // Send admin notification email
-          const adminEmailPromise = sendAdminEmail({
-            name: userName,
-            userEmail: userEmail,
-            invoiceId: invoiceId,
-            amount: result.amount || '',
-            currency: result.currency || ''
-          }).catch(err => {
-            console.error("Failed to send admin email:", err.message);
-            return false;
-          });
-
-          // Wait for both emails to complete (but don't block on failure)
-          const [userEmailSent, adminEmailSent] = await Promise.all([userEmailPromise, adminEmailPromise]);
-
-          // Mark email as sent in Google Sheets if at least one email was sent successfully
-          if (userEmailSent || adminEmailSent) {
-            await markEmailAsSent(invoiceId);
-          }
-
-          console.log(`Fallback email sending completed for invoice ${invoiceId}: user=${userEmailSent}, admin=${adminEmailSent}`);
-        } else {
-          console.log(`No user email found for invoice ${invoiceId}, skipping email`);
-        }
-      } else {
-        console.log(`Email already sent for invoice ${invoiceId}. Skipping.`);
-      }
+      // Trigger centralized email function
+      await triggerEmailsAfterLedgerUpdate({
+        invoiceId: invoiceId,
+        status: result.status,
+        emailSent: emailAlreadySent || '',
+        userEmail: userEmail,
+        userName: userName,
+        amount: result.amount,
+        currency: result.currency
+      });
     }
 
     return res.status(200).json({
@@ -307,7 +275,7 @@ export default async function handler(req, res) {
     
   } catch (err) {
     console.error("Check payment status error:", err);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: "Failed to check payment status",
       message: err.message
     });
