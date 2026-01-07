@@ -119,6 +119,77 @@ async function appendToGoogleSheets(row) {
   }
 }
 
+/* ---------- PaymentAdditionalInfo Sheet ---------- */
+const ADDITIONAL_INFO_HEADERS = [
+  "merchant_ref_id",
+  "invoice_id",
+  "name",
+  "email",
+  "timestamp"
+];
+
+let additionalInfoHeadersInitialized = false;
+
+async function ensureAdditionalInfoHeaders(sheetsClient) {
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "PaymentAdditionalInfo!A1:E1"
+    });
+
+    const existingHeaders = response.data.values?.[0];
+
+    if (!existingHeaders || !existingHeaders[0]) {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "PaymentAdditionalInfo!A1:E1",
+        valueInputOption: "RAW",
+        requestBody: { values: [ADDITIONAL_INFO_HEADERS] }
+      });
+      console.log("Added headers to PaymentAdditionalInfo sheet");
+    }
+  } catch (err) {
+    console.warn("AdditionalInfo header check failed, attempting to add:", err.message);
+    try {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "PaymentAdditionalInfo!A1:E1",
+        valueInputOption: "RAW",
+        requestBody: { values: [ADDITIONAL_INFO_HEADERS] }
+      });
+    } catch (updateErr) {
+      console.error("Failed to add AdditionalInfo headers:", updateErr.message);
+    }
+  }
+}
+
+async function appendToAdditionalInfoSheet(row) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID) {
+    console.warn("Google Sheets not configured, skipping additional info");
+    return;
+  }
+
+  try {
+    if (!additionalInfoHeadersInitialized) {
+      await ensureAdditionalInfoHeaders(sheetsClient);
+      additionalInfoHeadersInitialized = true;
+    }
+
+    await sheetsClient.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "PaymentAdditionalInfo!A:E",
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] }
+    });
+    console.log("Additional info entry added successfully");
+  } catch (err) {
+    console.error("Additional info append error:", err);
+    // Don't throw - additional info logging should not block payment flow
+  }
+}
+
 /* ---------- Activity Log Headers ---------- */
 const ACTIVITY_LOG_HEADERS = [
   "activity_id",
@@ -232,8 +303,8 @@ export default async function handler(req, res) {
    */
   const paymentBlocked = country === "US";
 
-  // Accept name and email for PaymentAdditionalInfo (stored in metadata)
-  const { amount, currency, quantity = 1, name, email } = req.body;
+  // Accept return_url, name, and email from request body
+  const { amount, currency, quantity = 1, name, email, return_url } = req.body;
   const description = "NILA TOKEN - Mindwave";
 
   if (!amount || typeof amount !== "number" || amount <= 0) {
@@ -242,6 +313,10 @@ export default async function handler(req, res) {
 
   if (!currency || !description) {
     return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  if (!return_url) {
+    return res.status(400).json({ error: 'return_url is required' });
   }
 
   const merchant_ref_id = `mw-${Date.now()}`;
@@ -265,6 +340,7 @@ export default async function handler(req, res) {
     amount: amount.toString(),
     merchant_ref_id,
     callback_url,
+    return_url, // 👈 dynamic
     metadata: JSON.stringify(userMetadata),
     cart: [
       {
@@ -291,9 +367,19 @@ export default async function handler(req, res) {
 
     invoiceId = data.invoice_id || data.invoice?.id || data.id;
 
-    if (!invoiceId) {
-      throw new Error("Invoice ID missing from 3Thix response");
-    }
+  if (!invoiceId) {
+    throw new Error("Invoice ID missing from 3Thix response");
+  }
+
+  // Store user info in Google Sheets (Additional Info Tab)
+  await appendToAdditionalInfoSheet([
+    merchant_ref_id,
+    invoiceId,
+    name,
+    email,
+    new Date().toISOString()
+  ]);
+
   } catch (err) {
     console.error("3Thix error:", err);
     return res.status(500).json({ error: "Failed to create invoice" });

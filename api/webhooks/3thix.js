@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import crypto from "crypto";
-import { sendPaymentSuccessEmail } from "../lib/email.js";
+import { sendPaymentSuccessEmail, sendAdminEmail } from "../lib/email.js";
 
 const {
   GOOGLE_SHEET_ID,
@@ -54,7 +54,9 @@ const SHEET_HEADERS = [
   "flags",
   "country",
   "notes",
-  "timestamp"
+  "timestamp",
+  "email_sent",
+  "email_sent_at"
 ];
 
 let headersInitialized = false;
@@ -104,7 +106,7 @@ async function appendToGoogleSheets(row) {
 
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:L",
+      range: "Transactions!A2:O",
       valueInputOption: "RAW",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] }
@@ -369,6 +371,82 @@ async function checkExistingPayment(invoiceId) {
   }
 }
 
+/**
+ * Check if email has already been sent for this invoice
+ * Returns the EMAIL_SENT status ('YES' or empty/null)
+ */
+async function checkEmailSent(invoiceId) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return null;
+
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "Transactions!A2:O"  // Include new columns
+    });
+
+    const rows = response.data.values || [];
+
+    // Search for the invoice ID (column G = index 6)
+    for (const row of rows) {
+      if (row[6] === invoiceId) {
+        return row[12] || null;  // Return EMAIL_SENT (column M = index 12)
+      }
+    }
+
+    return null;  // Not found
+  } catch (err) {
+    console.warn("Error checking email sent status:", err.message);
+    return null;  // Fail open
+  }
+}
+
+/**
+ * Mark email as sent in Google Sheets
+ */
+async function markEmailAsSent(invoiceId) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return;
+
+  try {
+    // Find the row with this invoice ID
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "Transactions!A2:O"
+    });
+
+    const rows = response.data.values || [];
+    let rowIndex = -1;
+
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][6] === invoiceId) {  // Column G = index 6
+        rowIndex = i + 2;  // +2 because we start from A2 and arrays are 0-indexed
+        break;
+      }
+    }
+
+    if (rowIndex === -1) {
+      console.warn(`Could not find row for invoice ${invoiceId} to mark email as sent`);
+      return;
+    }
+
+    // Update EMAIL_SENT and EMAIL_SENT_AT columns (M and N = indices 12 and 13)
+    await sheetsClient.spreadsheets.values.update({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: `Transactions!M${rowIndex}:N${rowIndex}`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [["YES", new Date().toISOString()]]
+      }
+    });
+
+    console.log(`Marked email as sent for invoice ${invoiceId}`);
+  } catch (err) {
+    console.error("Error marking email as sent:", err.message);
+    // Don't throw - this shouldn't block the payment flow
+  }
+}
+
 /* ---------- API Handler ---------- */
 export default async function handler(req, res) {
   setCorsHeaders(res);
@@ -491,7 +569,9 @@ export default async function handler(req, res) {
       parsedMetadata.paymentBlocked ? 'PAYMENT_BLOCKED_US' : '',  // flags
       country || '',                   // country
       notes,                           // notes
-      new Date().toISOString()         // timestamp
+      new Date().toISOString(),        // timestamp
+      '',                              // email_sent (empty initially)
+      ''                               // email_sent_at (empty initially)
     ]);
 
     // On successful payment, also write to PaymentAdditionalInfo
@@ -513,10 +593,15 @@ export default async function handler(req, res) {
         ]);
       }
 
+      // Check if email has already been sent (retry-safe)
+      const emailAlreadySent = await checkEmailSent(finalInvoiceId);
+
       // Send email notification only for new successful payments (idempotency)
-      if (isNewPayment && userEmail) {
+      if (isNewPayment && userEmail && emailAlreadySent !== 'YES') {
+        console.log(`Sending emails for invoice ${finalInvoiceId}`);
+
         // Non-blocking email send - failure does not affect payment flow
-        sendPaymentSuccessEmail({
+        const userEmailPromise = sendPaymentSuccessEmail({
           to: userEmail,
           name: userName,
           amount: amount?.toString() || '',
@@ -524,7 +609,32 @@ export default async function handler(req, res) {
           invoiceId: finalInvoiceId || ''
         }).catch(err => {
           console.error("Failed to send payment success email:", err.message);
+          return false;
         });
+
+        // Send admin notification email
+        const adminEmailPromise = sendAdminEmail({
+          name: userName,
+          userEmail: userEmail,
+          invoiceId: finalInvoiceId || '',
+          amount: amount?.toString() || '',
+          currency: currency || ''
+        }).catch(err => {
+          console.error("Failed to send admin email:", err.message);
+          return false;
+        });
+
+        // Wait for both emails to complete (but don't block on failure)
+        const [userEmailSent, adminEmailSent] = await Promise.all([userEmailPromise, adminEmailPromise]);
+
+        // Mark email as sent in Google Sheets if at least one email was sent successfully
+        if (userEmailSent || adminEmailSent) {
+          await markEmailAsSent(finalInvoiceId);
+        }
+
+        console.log(`Email sending completed for invoice ${finalInvoiceId}: user=${userEmailSent}, admin=${adminEmailSent}`);
+      } else if (emailAlreadySent === 'YES') {
+        console.log(`Email already sent for invoice ${finalInvoiceId}. Skipping.`);
       }
     }
 
