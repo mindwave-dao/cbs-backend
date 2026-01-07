@@ -287,7 +287,12 @@ export default async function handler(req, res) {
       body: JSON.stringify(payload)
     });
 
+    console.error("3Thix STATUS:", response.status);
+    console.error("3Thix HEADERS:", Object.fromEntries(response.headers.entries()));
+
     const data = await response.json();
+    console.error("3Thix JSON RESPONSE:", JSON.stringify(data));
+
     invoiceId = data.invoice_id || data.invoice?.id || data.id;
 
     if (!invoiceId) {
