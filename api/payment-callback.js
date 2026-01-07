@@ -1,6 +1,5 @@
 import { google } from "googleapis";
 import crypto from "crypto";
-import { sendPaymentSuccessEmail } from "../lib/email.js";
 
 const {
   GOOGLE_SHEET_ID,
@@ -513,19 +512,7 @@ export default async function handler(req, res) {
         ]);
       }
 
-      // Send email notification only for new successful payments (idempotency)
-      if (isNewPayment && userEmail) {
-        // Non-blocking email send - failure does not affect payment flow
-        sendPaymentSuccessEmail({
-          to: userEmail,
-          name: userName,
-          amount: amount?.toString() || '',
-          currency: currency || '',
-          invoiceId: finalInvoiceId || ''
-        }).catch(err => {
-          console.error("Failed to send payment success email:", err.message);
-        });
-      }
+      // Email sending removed - now handled only in webhooks/3thix.js
     }
 
     console.log(`Payment callback processed: ${finalInvoiceId} - ${mappedStatus}`);

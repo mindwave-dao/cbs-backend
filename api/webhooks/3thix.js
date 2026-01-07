@@ -462,6 +462,8 @@ export default async function handler(req, res) {
   }
 
   try {
+    console.log("WEBHOOK RECEIVED"); // Add console.log for debugging
+
     // Parse callback data from either query params (GET) or body (POST)
     let data = req.method === 'GET' ? req.query : req.body;
 
@@ -596,8 +598,8 @@ export default async function handler(req, res) {
       // Check if email has already been sent (retry-safe)
       const emailAlreadySent = await checkEmailSent(finalInvoiceId);
 
-      // Send email notification only for new successful payments (idempotency)
-      if (isNewPayment && userEmail && emailAlreadySent !== 'YES') {
+      // Send email notification for successful payments (retry-safe)
+      if (userEmail && emailAlreadySent !== 'YES') {
         console.log(`Sending emails for invoice ${finalInvoiceId}`);
 
         // Non-blocking email send - failure does not affect payment flow
