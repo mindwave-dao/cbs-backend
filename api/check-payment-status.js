@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { triggerEmailsAfterLedgerUpdate } from "../lib/email.js";
+import { handlePostSuccessActions } from "../lib/email.js";
 
 const {
   GOOGLE_SHEET_ID,
@@ -252,10 +252,9 @@ export default async function handler(req, res) {
       const { name: userName, email: userEmail } = await getUserInfo(invoiceId);
 
       // Trigger centralized email function
-      await triggerEmailsAfterLedgerUpdate({
+      await handlePostSuccessActions({
         invoiceId: invoiceId,
         status: result.status,
-        emailSent: emailAlreadySent || '',
         userEmail: userEmail,
         userName: userName,
         amount: result.amount,

@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import crypto from "crypto";
-import { triggerEmailsAfterLedgerUpdate } from "../lib/email.js";
+import { handlePostSuccessActions } from "../lib/email.js";
 
 const {
   GOOGLE_SHEET_ID,
@@ -595,10 +595,9 @@ export default async function handler(req, res) {
       }
 
       // Trigger emails immediately after successful ledger update
-      await triggerEmailsAfterLedgerUpdate({
+      await handlePostSuccessActions({
         invoiceId: finalInvoiceId,
         status: mappedStatus,
-        emailSent: '',  // New ledger entry, so email not sent yet
         userEmail: userEmail,
         userName: userName,
         amount: amount,
