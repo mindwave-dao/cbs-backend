@@ -462,9 +462,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    console.log("WEBHOOK RECEIVED"); // Add console.log for debugging
-
-    // Parse callback data from either query params (GET) or body (POST)
+    console.log("🔔 3THIX WEBHOOK HIT");
+    console.log("Payload:", JSON.stringify(req.body || req.query, null, 2));
     let data = req.method === 'GET' ? req.query : req.body;
 
     // Check for 3thix Webhook Wrapper (signature + payload)
@@ -599,6 +598,12 @@ export default async function handler(req, res) {
       const emailAlreadySent = await checkEmailSent(finalInvoiceId);
 
       // Send email notification for successful payments (retry-safe)
+      console.log("EMAIL CHECK:", {
+        status: mappedStatus,
+        email: userEmail,
+        emailSentFlag: emailAlreadySent
+      });
+
       if (userEmail && emailAlreadySent !== 'YES') {
         console.log(`Sending emails for invoice ${finalInvoiceId}`);
 
