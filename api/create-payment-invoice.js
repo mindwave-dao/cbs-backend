@@ -11,14 +11,16 @@ const {
   GOOGLE_SHEETS_CREDENTIALS
 } = process.env;
 
-// SANDBOX references (commented for future debugging):
-// THIX_API_URL=https://sandbox-api.3thix.com
-// THIX_API_KEY=SANDBOX_API_KEY
-// PAYMENT_PAGE_BASE=https://sandbox-pay.3thix.com
+// SANDBOX (DO NOT USE IN PROD)
+// https://sandbox-api.3thix.com
+// https://sandbox-pay.3thix.com
 
-// Validation to prevent wrong API URL configuration
-if (THIX_API_URL && THIX_API_URL.includes('pay.3thix.com')) {
-  throw new Error('INVALID CONFIG: THIX_API_URL must be api.3thix.com, not pay.3thix.com');
+// Enforce Correct 3Thix Domains
+if (!process.env.THIX_API_URL?.startsWith('https://api.3thix.com')) {
+  throw new Error('INVALID CONFIG: THIX_API_URL must be https://api.3thix.com');
+}
+if (process.env.THIX_API_URL.includes('pay.3thix.com')) {
+  throw new Error('INVALID CONFIG: Do not use pay.3thix.com for API calls');
 }
 
 /* ---------- CORS Setup ---------- */
@@ -300,6 +302,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Payment service not configured" });
   }
 
+  // Logging (Temporary but Mandatory)
+  console.log('3Thix API URL:', process.env.THIX_API_URL);
+  console.log('3Thix Request:', `${process.env.THIX_API_URL}/order/payment/create`);
+
   const country = req.headers["x-vercel-ip-country"] || "";
   const userAgent = req.headers["user-agent"] || "";
   const ipAddress = req.headers["x-forwarded-for"]?.split(',')[0]?.trim() ||
@@ -370,13 +376,18 @@ export default async function handler(req, res) {
       body: JSON.stringify(payload)
     });
 
-    const data = await response.json();
+    // Reject the request if response is not JSON
+    const text = await response.text();
+    if (text.startsWith('<!DOCTYPE')) {
+      throw new Error('3Thix API returned HTML — wrong endpoint or domain');
+    }
+    const data = JSON.parse(text);
 
     invoiceId = data.invoice_id || data.invoice?.id || data.id;
 
-  if (!invoiceId) {
-    throw new Error("Invoice ID missing from 3Thix response");
-  }
+    if (!invoiceId) {
+      throw new Error("Invoice ID missing from 3Thix response");
+    }
 
   // Store user info in Google Sheets (Additional Info Tab)
   await appendToAdditionalInfoSheet([
@@ -440,8 +451,8 @@ export default async function handler(req, res) {
     ]);
   }
 
-  // Build redirect URL for payment page
-  const redirectUrl = `${process.env.PAYMENT_PAGE_BASE}?invoiceId=${invoiceId}&callbackUrl=${encodeURIComponent(callback_url)}`;
+  // Generate Redirect URL Correctly
+  const redirectUrl = `${process.env.PAYMENT_PAGE_BASE}/?invoiceId=${invoiceId}`;
 
   // ✅ Respond with invoice details and redirect URL
   res.status(200).json({
