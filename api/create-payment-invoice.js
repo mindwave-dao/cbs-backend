@@ -16,6 +16,11 @@ const {
 // THIX_API_KEY=SANDBOX_API_KEY
 // PAYMENT_PAGE_BASE=https://sandbox-pay.3thix.com
 
+// Validation to prevent wrong API URL configuration
+if (THIX_API_URL && THIX_API_URL.includes('pay.3thix.com')) {
+  throw new Error('INVALID CONFIG: THIX_API_URL must be api.3thix.com, not pay.3thix.com');
+}
+
 /* ---------- CORS Setup ---------- */
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
