@@ -11,6 +11,11 @@ const {
   GOOGLE_SHEETS_CREDENTIALS
 } = process.env;
 
+// SANDBOX references (commented for future debugging):
+// THIX_API_URL=https://sandbox-api.3thix.com
+// THIX_API_KEY=SANDBOX_API_KEY
+// PAYMENT_PAGE_BASE=https://sandbox-pay.3thix.com
+
 /* ---------- CORS Setup ---------- */
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -44,20 +49,17 @@ function getGoogleSheets() {
   }
 }
 
-/* ---------- Transactions Sheet (Main Ledger) ---------- */
+/* ---------- Payment Ledger Sheet ---------- */
 const SHEET_HEADERS = [
-  "merchant_ref_id",
-  "description",
-  "amount",
-  "currency",
-  "status",
-  "gateway",
-  "invoice_id",
-  "tokens_issued",
-  "flags",
-  "country",
-  "notes",
-  "timestamp"
+  "INVOICE_ID",
+  "STATUS",
+  "EMAIL",
+  "NAME",
+  "EMAIL_SENT",
+  "EMAIL_SENT_AT",
+  "AMOUNT",
+  "CURRENCY",
+  "CREATED_AT"
 ];
 
 let headersInitialized = false;
@@ -66,7 +68,7 @@ async function ensureHeadersExist(sheetsClient) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A1:L1"
+      range: "Transactions!A1:I1"
     });
 
     const existingHeaders = response.data.values?.[0];
@@ -74,7 +76,7 @@ async function ensureHeadersExist(sheetsClient) {
     if (!existingHeaders || !existingHeaders[0]) {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "Transactions!A1:L1",
+        range: "Transactions!A1:I1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -85,7 +87,7 @@ async function ensureHeadersExist(sheetsClient) {
     try {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "Transactions!A1:L1",
+        range: "Transactions!A1:I1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -107,7 +109,7 @@ async function appendToGoogleSheets(row) {
 
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:L",
+      range: "Transactions!A2:I",
       valueInputOption: "RAW",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] }
@@ -402,20 +404,17 @@ export default async function handler(req, res) {
     new Date().toISOString()       // timestamp
   ]);
 
-  // Write to Transactions sheet with INVOICE_CREATED status
+  // Write to Transactions sheet with PENDING status
   await appendToGoogleSheets([
-    merchant_ref_id,
-    description,
-    amount.toString(),
-    currency,
-    "INVOICE_CREATED",
-    "3THIX",
-    invoiceId,
-    "", // tokens_issued
-    paymentBlocked ? "PAYMENT_BLOCKED_US" : "",
-    country,
-    "", // notes
-    new Date().toISOString()
+    invoiceId,                    // INVOICE_ID
+    "PENDING",                    // STATUS
+    email || "",                  // EMAIL
+    name || "",                   // NAME
+    "",                           // EMAIL_SENT
+    "",                           // EMAIL_SENT_AT
+    amount.toString(),            // AMOUNT
+    currency,                     // CURRENCY
+    new Date().toISOString()      // CREATED_AT
   ]);
 
   // If payment blocked, log PAYMENT_BLOCKED_US event
@@ -436,12 +435,13 @@ export default async function handler(req, res) {
     ]);
   }
 
-  // ✅ Respond normally (NO 403)
-  // Ledger will be updated via payment-callback when payment is completed/failed/timed out
+  // Build redirect URL for payment page
+  const redirectUrl = `${process.env.PAYMENT_PAGE_BASE}?invoiceId=${invoiceId}&callbackUrl=${encodeURIComponent(callback_url)}`;
+
+  // ✅ Respond with invoice details and redirect URL
   res.status(200).json({
     invoiceId,
     merchant_ref_id,
-    paymentBlocked,
-    callback_url
+    redirectUrl
   });
 }

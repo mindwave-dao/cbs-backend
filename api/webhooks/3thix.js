@@ -8,6 +8,11 @@ const {
   THIX_WEBHOOK_SECRET
 } = process.env;
 
+// SANDBOX references (commented for future debugging):
+// THIX_API_URL=https://sandbox-api.3thix.com
+// THIX_API_KEY=SANDBOX_API_KEY
+// PAYMENT_PAGE_BASE=https://sandbox-pay.3thix.com
+
 /* ---------- CORS Setup ---------- */
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -41,22 +46,17 @@ function getGoogleSheets() {
   }
 }
 
-/* ---------- Transactions Sheet (Main Ledger) ---------- */
+/* ---------- Payment Ledger Sheet ---------- */
 const SHEET_HEADERS = [
-  "merchant_ref_id",
-  "description",
-  "amount",
-  "currency",
-  "status",
-  "gateway",
-  "invoice_id",
-  "tokens_issued",
-  "flags",
-  "country",
-  "notes",
-  "timestamp",
-  "email_sent",
-  "email_sent_at"
+  "INVOICE_ID",
+  "STATUS",
+  "EMAIL",
+  "NAME",
+  "EMAIL_SENT",
+  "EMAIL_SENT_AT",
+  "AMOUNT",
+  "CURRENCY",
+  "CREATED_AT"
 ];
 
 let headersInitialized = false;
@@ -65,7 +65,7 @@ async function ensureHeadersExist(sheetsClient) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A1:L1"
+      range: "Transactions!A1:I1"
     });
 
     const existingHeaders = response.data.values?.[0];
@@ -73,7 +73,7 @@ async function ensureHeadersExist(sheetsClient) {
     if (!existingHeaders || !existingHeaders[0]) {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "Transactions!A1:L1",
+        range: "Transactions!A1:I1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -84,7 +84,7 @@ async function ensureHeadersExist(sheetsClient) {
     try {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "Transactions!A1:L1",
+        range: "Transactions!A1:I1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -447,6 +447,93 @@ async function markEmailAsSent(invoiceId) {
   }
 }
 
+/**
+ * Update payment status in Google Sheets
+ */
+async function updatePaymentStatus(invoiceId, newStatus) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return false;
+
+  try {
+    // Get all rows from Transactions sheet
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "Transactions!A2:I"  // Skip header row, get all columns
+    });
+
+    const rows = response.data.values || [];
+    let rowIndex = -1;
+
+    // Find the row with matching INVOICE_ID (column A = index 0)
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][0] === invoiceId) {
+        rowIndex = i + 2;  // +2 because we start from A2 and arrays are 0-indexed
+        break;
+      }
+    }
+
+    if (rowIndex === -1) {
+      console.warn(`Could not find row for invoice ${invoiceId}`);
+      return false;
+    }
+
+    // Update STATUS column (column B = index 1)
+    await sheetsClient.spreadsheets.values.update({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: `Transactions!B${rowIndex}`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[newStatus]]
+      }
+    });
+
+    console.log(`Updated status for invoice ${invoiceId} to ${newStatus}`);
+    return true;
+  } catch (err) {
+    console.error("Error updating payment status:", err.message);
+    return false;
+  }
+}
+
+/**
+ * Get payment row data by invoice ID
+ */
+async function getPaymentRow(invoiceId) {
+  const sheetsClient = getGoogleSheets();
+  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return null;
+
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "Transactions!A2:I"
+    });
+
+    const rows = response.data.values || [];
+
+    // Find the row with matching INVOICE_ID (column A = index 0)
+    for (const row of rows) {
+      if (row[0] === invoiceId) {
+        return {
+          invoiceId: row[0],
+          status: row[1],
+          email: row[2],
+          name: row[3],
+          emailSent: row[4],
+          emailSentAt: row[5],
+          amount: row[6],
+          currency: row[7],
+          createdAt: row[8]
+        };
+      }
+    }
+
+    return null;  // Not found
+  } catch (err) {
+    console.error("Error getting payment row:", err.message);
+    return null;
+  }
+}
+
 /* ---------- API Handler ---------- */
 export default async function handler(req, res) {
   setCorsHeaders(res);
@@ -456,170 +543,85 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // Accept both GET (redirect callbacks) and POST (webhooks)
-  if (req.method !== "POST" && req.method !== "GET") {
+  if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    console.log("🔔 3THIX WEBHOOK HIT");
-    console.log("Payload:", JSON.stringify(req.body || req.query, null, 2));
-    let data = req.method === 'GET' ? req.query : req.body;
+    console.log("🔔 3THIX WEBHOOK RECEIVED");
+    const data = req.body;
 
-    // Check for 3thix Webhook Wrapper (signature + payload)
-    if (data && data.payload && data.signature) {
-      console.log("Received wrapped 3thix webhook payload");
-      // TODO: Verify signature using THIX_WEBHOOK_SECRET if strict security is needed
-      data = data.payload;
-    }
-
-    console.log("Payment callback received:", JSON.stringify(data, null, 2));
-
-    // Extract payment information from callback
-    // 3Thix typically sends: invoice_id, merchant_ref_id, status, amount, currency, etc.
+    // Extract payment information from webhook
     const {
       invoice_id,
       invoiceId,
-      merchant_ref_id,
-      merchantRefId,
       status,
-      payment_status,
-      amount,
-      currency,
-      fee,
-      error_message,
-      errorMessage,
-      description,
-      country,
-      metadata
+      payment_status
     } = data;
 
     const finalInvoiceId = invoice_id || invoiceId;
-    const finalMerchantRefId = merchant_ref_id || merchantRefId;
     const finalStatus = status || payment_status;
-    const finalErrorMessage = error_message || errorMessage;
-    const parsedMetadata = parseMetadata(metadata);
 
-    if (!finalInvoiceId && !finalMerchantRefId) {
-      console.error("Missing invoice_id and merchant_ref_id in callback");
+    if (!finalInvoiceId) {
+      console.error("Missing invoice_id in webhook");
       return res.status(400).json({
-        error: "Missing required fields: invoice_id or merchant_ref_id"
+        error: "Missing required field: invoice_id"
       });
     }
 
     if (!finalStatus) {
-      console.error("Missing status in callback");
+      console.error("Missing status in webhook");
       return res.status(400).json({ error: "Missing required field: status" });
     }
 
-    // Map the status to our internal representation
-    const mappedStatus = mapPaymentStatus(finalStatus);
-    const eventType = mapStatusToEventType(mappedStatus);
+    // Normalize status (PAID, COMPLETED → SUCCESS)
+    const normalizedStatus = mapPaymentStatus(finalStatus);
 
-    // Log to TransactionActivityLog (all events, always)
-    await appendToActivityLog([
-      crypto.randomUUID(),                              // activity_id
-      finalInvoiceId || '',                             // invoice_id
-      finalMerchantRefId || '',                         // merchant_ref_id
-      eventType,                                        // event_type
-      amount?.toString() || '',                         // amount
-      currency || '',                                   // currency
-      "3THIX",                                          // gateway
-      country || '',                                    // country
-      '',                                               // user_agent (not available in callback)
-      '',                                               // ip (not available in callback)
-      JSON.stringify({ originalStatus: finalStatus, error: finalErrorMessage || null }),  // metadata
-      new Date().toISOString()                          // timestamp
-    ]);
+    console.log(`Processing webhook: ${finalInvoiceId} - ${finalStatus} → ${normalizedStatus}`);
 
-    // Only record to main ledger if it's a final status
-    if (!shouldRecordStatus(mappedStatus)) {
-      console.log(`Status ${finalStatus} (mapped: ${mappedStatus}) is not a final status, skipping ledger update`);
-      return res.status(200).json({
-        received: true,
-        status: mappedStatus,
-        recorded: false,
-        message: "Status not final, ledger not updated"
+    // Update Google Sheets status
+    const updateSuccess = await updatePaymentStatus(finalInvoiceId, normalizedStatus);
+
+    if (!updateSuccess) {
+      console.error(`Failed to update status for invoice ${finalInvoiceId}`);
+      return res.status(500).json({
+        error: "Failed to update payment status"
       });
     }
 
-    // Check if this payment was already recorded (idempotency)
-    const existingPaymentStatus = await checkExistingPayment(finalInvoiceId);
-    const isNewPayment = !existingPaymentStatus;
+    // Critical rule: Email must be triggered inside the same request after Google Sheets update
+    if (normalizedStatus === 'SUCCESS') {
+      const row = await getPaymentRow(finalInvoiceId);
 
-    // Build notes based on status
-    let notes = '';
-    if (mappedStatus === 'FAILED' && finalErrorMessage) {
-      notes = `Error: ${finalErrorMessage}`;
-    } else if (mappedStatus === 'TIMEOUT') {
-      notes = 'Payment interrupted/timed out after 2+ minutes';
-    } else if (mappedStatus === 'CANCELLED') {
-      notes = 'User cancelled payment';
-    }
+      if (row && row.emailSent !== 'YES') {
+        console.log(`Triggering email for successful payment: ${finalInvoiceId}`);
 
-    // Append to Google Sheets ledger (main Transactions sheet)
-    await appendToGoogleSheets([
-      finalMerchantRefId || '',        // merchant_ref_id
-      description || '',               // description
-      amount?.toString() || '',        // amount
-      currency || '',                  // currency
-      mappedStatus,                    // status
-      "3THIX",                         // gateway
-      finalInvoiceId || '',            // invoice_id
-      '',                              // tokens_issued (empty)
-      parsedMetadata.paymentBlocked ? 'PAYMENT_BLOCKED_US' : '',  // flags
-      country || '',                   // country
-      notes,                           // notes
-      new Date().toISOString(),        // timestamp
-      '',                              // email_sent (empty initially)
-      ''                               // email_sent_at (empty initially)
-    ]);
-
-    // On successful payment, also write to PaymentAdditionalInfo
-    if (mappedStatus === 'SUCCESS') {
-      const userName = parsedMetadata.name || '';
-      const userEmail = parsedMetadata.email || '';
-
-      // Only write if we have at least some user info
-      if (userName || userEmail) {
-        await appendToAdditionalInfo([
-          finalInvoiceId || '',           // invoice_id
-          finalMerchantRefId || '',       // merchant_ref_id
-          userName,                        // name
-          userEmail,                       // email
-          amount?.toString() || '',        // amount
-          currency || '',                  // currency
-          'SUCCESS',                       // status
-          new Date().toISOString()         // created_at
-        ]);
+        // Trigger centralized email function
+        await handlePostSuccessActions({
+          invoiceId: finalInvoiceId,
+          status: normalizedStatus,
+          userEmail: row.email,
+          userName: row.name,
+          amount: row.amount,
+          currency: row.currency
+        });
+      } else if (row && row.emailSent === 'YES') {
+        console.log(`Email already sent for invoice ${finalInvoiceId}`);
       }
-
-      // Trigger emails immediately after successful ledger update
-      await handlePostSuccessActions({
-        invoiceId: finalInvoiceId,
-        status: mappedStatus,
-        userEmail: userEmail,
-        userName: userName,
-        amount: amount,
-        currency: currency
-      });
     }
 
-    console.log(`Payment callback processed: ${finalInvoiceId} - ${mappedStatus}`);
+    console.log(`Webhook processed successfully: ${finalInvoiceId} - ${normalizedStatus}`);
 
-    // Return success response
     return res.status(200).json({
       received: true,
-      status: mappedStatus,
-      recorded: true,
-      invoice_id: finalInvoiceId,
-      merchant_ref_id: finalMerchantRefId
+      status: normalizedStatus,
+      invoiceId: finalInvoiceId
     });
 
   } catch (err) {
-    console.error("Payment callback error:", err);
+    console.error("Webhook processing error:", err);
     return res.status(500).json({
-      error: "Failed to process payment callback",
+      error: "Failed to process webhook",
       message: err.message
     });
   }

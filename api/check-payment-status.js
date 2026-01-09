@@ -6,6 +6,11 @@ const {
   GOOGLE_SHEETS_CREDENTIALS
 } = process.env;
 
+// SANDBOX references (commented for future debugging):
+// THIX_API_URL=https://sandbox-api.3thix.com
+// THIX_API_KEY=SANDBOX_API_KEY
+// PAYMENT_PAGE_BASE=https://sandbox-pay.3thix.com
+
 /* ---------- CORS Setup ---------- */
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -39,35 +44,7 @@ function getGoogleSheets() {
   }
 }
 
-/**
- * Check if email has already been sent for this invoice
- * Returns the EMAIL_SENT status ('YES' or empty/null)
- */
-async function checkEmailSent(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return null;
 
-  try {
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:O"  // Include new columns
-    });
-
-    const rows = response.data.values || [];
-
-    // Search for the invoice ID (column G = index 6)
-    for (const row of rows) {
-      if (row[6] === invoiceId) {
-        return row[12] || null;  // Return EMAIL_SENT (column M = index 12)
-      }
-    }
-
-    return null;  // Not found
-  } catch (err) {
-    console.warn("Error checking email sent status:", err.message);
-    return null;  // Fail open
-  }
-}
 
 /**
  * Mark email as sent in Google Sheets
@@ -150,54 +127,51 @@ async function getUserInfo(invoiceId) {
 /**
  * Find payment status by invoice ID in Google Sheets
  * Transactions sheet columns:
- * A: merchant_ref_id
- * B: description
- * C: amount
- * D: currency
- * E: status
- * F: gateway
- * G: invoice_id
- * H: tokens_issued
- * I: flags
- * J: country
- * K: notes
- * L: timestamp
+ * A: INVOICE_ID
+ * B: STATUS
+ * C: EMAIL
+ * D: NAME
+ * E: EMAIL_SENT
+ * F: EMAIL_SENT_AT
+ * G: AMOUNT
+ * H: CURRENCY
+ * I: CREATED_AT
  */
 async function findPaymentStatus(invoiceId) {
   const sheetsClient = getGoogleSheets();
   if (!sheetsClient || !GOOGLE_SHEET_ID) {
     return { found: false, error: "Google Sheets not configured" };
   }
-  
+
   try {
-    // Fetch Invoice ID (column G) and Status (column E) from all rows
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:L"  // Skip header row
+      range: "Transactions!A2:I"  // Skip header row
     });
-    
+
     const rows = response.data.values || [];
-    
-    // Search for the invoice ID (column G = index 6)
+
+    // Search for the invoice ID (column A = index 0)
     for (const row of rows) {
-      const rowInvoiceId = row[6];  // Column G (0-indexed = 6)
+      const rowInvoiceId = row[0];  // Column A (0-indexed = 0)
       if (rowInvoiceId === invoiceId) {
-        const status = row[4];  // Column E (0-indexed = 4)
         return {
           found: true,
-          status: status || 'PENDING',
-          invoiceId: rowInvoiceId,
-          merchantRefId: row[0] || null,
-          amount: row[2] || null,
-          currency: row[3] || null,
-          timestamp: row[11] || null
+          status: row[1] || 'PENDING',  // Column B
+          email: row[2] || '',          // Column C
+          name: row[3] || '',           // Column D
+          emailSent: row[4] || '',      // Column E
+          emailSentAt: row[5] || '',    // Column F
+          amount: row[6] || null,       // Column G
+          currency: row[7] || null,     // Column H
+          createdAt: row[8] || null     // Column I
         };
       }
     }
-    
+
     // Invoice not found in ledger - payment is still pending
     return { found: false, status: 'PENDING' };
-    
+
   } catch (err) {
     console.error("Error searching Google Sheets:", err);
     return { found: false, error: err.message };
@@ -243,20 +217,16 @@ export default async function handler(req, res) {
 
     console.log(`Payment status for ${invoiceId}: ${result.status}`);
 
-    // Trigger emails immediately after finding successful payment in ledger
-    if (result.status === 'SUCCESS' && result.found) {
-      // Get current email status from ledger
-      const emailAlreadySent = await checkEmailSent(invoiceId);
-
-      // Get user info from PaymentAdditionalInfo sheet
-      const { name: userName, email: userEmail } = await getUserInfo(invoiceId);
+    // If STATUS=SUCCESS and EMAIL_SENT=NO → trigger email
+    if (result.status === 'SUCCESS' && result.found && result.emailSent !== 'YES') {
+      console.log(`Triggering email for successful payment: ${invoiceId}`);
 
       // Trigger centralized email function
       await handlePostSuccessActions({
         invoiceId: invoiceId,
         status: result.status,
-        userEmail: userEmail,
-        userName: userName,
+        userEmail: result.email,
+        userName: result.name,
         amount: result.amount,
         currency: result.currency
       });
@@ -266,12 +236,11 @@ export default async function handler(req, res) {
       status: result.status,
       invoiceId,
       found: result.found,
-      ...(result.merchantRefId && { merchantRefId: result.merchantRefId }),
       ...(result.amount && { amount: result.amount }),
       ...(result.currency && { currency: result.currency }),
-      ...(result.timestamp && { timestamp: result.timestamp })
+      ...(result.createdAt && { createdAt: result.createdAt })
     });
-    
+
   } catch (err) {
     console.error("Check payment status error:", err);
     return res.status(500).json({
