@@ -6,6 +6,7 @@ import { isGeoRestricted } from "../lib/geo.js";
 const {
   THIX_API_KEY,
   THIX_API_URL,
+  PAYMENT_PAGE_BASE,
   VERCEL_URL,
   GOOGLE_SHEET_ID,
   GOOGLE_SHEETS_CREDENTIALS
@@ -19,8 +20,10 @@ const {
 if (!process.env.THIX_API_URL?.startsWith('https://api.3thix.com')) {
   throw new Error('INVALID CONFIG: THIX_API_URL must be https://api.3thix.com');
 }
-if (process.env.THIX_API_URL.includes('pay.3thix.com')) {
-  throw new Error('INVALID CONFIG: Do not use pay.3thix.com for API calls');
+if (process.env.THIX_API_URL?.includes('pay.3thix.com')) {
+  throw new Error(
+    'INVALID CONFIG: THIX_API_URL must be https://api.3thix.com (API domain), not pay.3thix.com'
+  );
 }
 
 /* ---------- CORS Setup ---------- */
@@ -400,7 +403,7 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error("3Thix error:", err);
-    return res.status(500).json({ error: "Failed to create invoice" });
+    return res.status(500).json({ error: "PAYMENT_SERVICE_ERROR", message: "Failed to create invoice" });
   }
 
   // Log INVOICE_CREATED event to TransactionActivityLog
@@ -452,7 +455,7 @@ export default async function handler(req, res) {
   }
 
   // Generate Redirect URL Correctly
-  const redirectUrl = `${process.env.PAYMENT_PAGE_BASE}/?invoiceId=${invoiceId}`;
+  const redirectUrl = `${process.env.PAYMENT_PAGE_BASE}/?invoiceId=${invoiceId}&callbackUrl=${encodeURIComponent(return_url)}`;
 
   // ✅ Respond with invoice details and redirect URL
   res.status(200).json({
