@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import crypto from "crypto";
-import { handlePostSuccessActions } from "../lib/email.js";
+import { processSuccessfulPayment } from "../lib/email.js";
 
 const {
   GOOGLE_SHEET_ID,
@@ -593,20 +593,19 @@ export default async function handler(req, res) {
     if (normalizedStatus === 'SUCCESS') {
       const row = await getPaymentRow(finalInvoiceId);
 
-      if (row && row.emailSent !== 'YES') {
-        console.log(`Triggering email for successful payment: ${finalInvoiceId}`);
+      if (row) {
+        console.log(`🎯 Processing successful payment via webhook for ${finalInvoiceId}`);
 
-        // Trigger centralized email function
-        await handlePostSuccessActions({
-          invoiceId: finalInvoiceId,
-          status: normalizedStatus,
-          userEmail: row.email,
-          userName: row.name,
-          amount: row.amount,
-          currency: row.currency
-        });
-      } else if (row && row.emailSent === 'YES') {
-        console.log(`Email already sent for invoice ${finalInvoiceId}`);
+        // Use shared email processing function (same as check-payment-status endpoint)
+        const emailResult = await processSuccessfulPayment(
+          finalInvoiceId,
+          row.email,
+          row.name,
+          row.amount,
+          row.currency
+        );
+
+        console.log(`📧 Webhook email result for ${finalInvoiceId}: ${emailResult.emailSent ? 'SENT' : 'NOT_SENT'}`);
       }
     }
 

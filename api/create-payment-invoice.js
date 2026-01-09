@@ -16,7 +16,7 @@ const {
 // https://sandbox-api.3thix.com
 // https://sandbox-pay.3thix.com
 
-// Enforce Correct 3Thix Domains
+// 🔐 CONFIG VALIDATION (MANDATORY) - Enforce Correct 3Thix Domains
 if (!process.env.THIX_API_URL?.startsWith('https://api.3thix.com')) {
   throw new Error('INVALID CONFIG: THIX_API_URL must be https://api.3thix.com');
 }
@@ -24,6 +24,9 @@ if (process.env.THIX_API_URL?.includes('pay.3thix.com')) {
   throw new Error(
     'INVALID CONFIG: THIX_API_URL must be https://api.3thix.com (API domain), not pay.3thix.com'
   );
+}
+if (!process.env.PAYMENT_PAGE_BASE?.startsWith('https://pay.3thix.com')) {
+  throw new Error('INVALID CONFIG: PAYMENT_PAGE_BASE must start with https://pay.3thix.com');
 }
 
 /* ---------- CORS Setup ---------- */
@@ -59,17 +62,14 @@ function getGoogleSheets() {
   }
 }
 
-/* ---------- Payment Ledger Sheet ---------- */
+/* ---------- PAYMENT_TRANSACTIONS Sheet ---------- */
 const SHEET_HEADERS = [
   "INVOICE_ID",
   "STATUS",
   "EMAIL",
   "NAME",
   "EMAIL_SENT",
-  "EMAIL_SENT_AT",
-  "AMOUNT",
-  "CURRENCY",
-  "CREATED_AT"
+  "EMAIL_SENT_AT"
 ];
 
 let headersInitialized = false;
@@ -78,7 +78,7 @@ async function ensureHeadersExist(sheetsClient) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A1:I1"
+      range: "PAYMENT_TRANSACTIONS!A1:F1"
     });
 
     const existingHeaders = response.data.values?.[0];
@@ -86,18 +86,18 @@ async function ensureHeadersExist(sheetsClient) {
     if (!existingHeaders || !existingHeaders[0]) {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "Transactions!A1:I1",
+        range: "PAYMENT_TRANSACTIONS!A1:F1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
-      console.log("Added headers to Transactions sheet");
+      console.log("Added headers to PAYMENT_TRANSACTIONS sheet");
     }
   } catch (err) {
     console.warn("Header check failed, attempting to add:", err.message);
     try {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "Transactions!A1:I1",
+        range: "PAYMENT_TRANSACTIONS!A1:F1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -119,12 +119,12 @@ async function appendToGoogleSheets(row) {
 
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:I",
+      range: "PAYMENT_TRANSACTIONS!A2:F",
       valueInputOption: "RAW",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] }
     });
-    console.log("Ledger entry added successfully");
+    console.log("PAYMENT_TRANSACTIONS entry added successfully");
   } catch (err) {
     console.error("Google Sheets append error:", err);
     throw err;
@@ -319,8 +319,8 @@ export default async function handler(req, res) {
    */
   const paymentBlocked = country === "US";
 
-  // Accept return_url, name, and email from request body
-  const { amount, currency, quantity = 1, name, email, return_url } = req.body;
+  // Accept name, and email from request body
+  const { amount, currency, quantity = 1, name, email } = req.body;
   const description = "NILA TOKEN - Mindwave";
 
   if (!amount || typeof amount !== "number" || amount <= 0) {
@@ -331,17 +331,14 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
-  if (!return_url) {
-    return res.status(400).json({ error: 'return_url is required' });
-  }
-
-  const merchant_ref_id = `mw-${Date.now()}`;
-  
-  // Build callback URL for payment status updates
+  // Construct URLs automatically
   const baseUrl = VERCEL_URL
     ? `https://${VERCEL_URL}`
     : 'http://localhost:3000';
+  const return_url = `${baseUrl}/payment-success.html`;
   const callback_url = `${baseUrl}/api/webhooks/3thix`;
+
+  const merchant_ref_id = `mw-${Date.now()}`;
 
   // Store user info in metadata for retrieval during callback
   const userMetadata = {
@@ -423,17 +420,14 @@ export default async function handler(req, res) {
     new Date().toISOString()       // timestamp
   ]);
 
-  // Write to Transactions sheet with PENDING status
+  // Insert row into PAYMENT_TRANSACTIONS sheet
   await appendToGoogleSheets([
     invoiceId,                    // INVOICE_ID
     "PENDING",                    // STATUS
     email || "",                  // EMAIL
     name || "",                   // NAME
-    "",                           // EMAIL_SENT
-    "",                           // EMAIL_SENT_AT
-    amount.toString(),            // AMOUNT
-    currency,                     // CURRENCY
-    new Date().toISOString()      // CREATED_AT
+    "NO",                         // EMAIL_SENT
+    ""                            // EMAIL_SENT_AT
   ]);
 
   // If payment blocked, log PAYMENT_BLOCKED_US event
