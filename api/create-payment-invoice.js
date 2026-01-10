@@ -3,10 +3,12 @@ import { google } from "googleapis";
 import crypto from "crypto";
 import { isGeoRestricted } from "../lib/geo.js";
 
+// 🔐 REQUIRED ENV VARIABLES
 const {
   THIX_API_KEY,
   THIX_API_URL,
   PAYMENT_PAGE_BASE,
+  FRONTEND_BASE_URL,
   VERCEL_URL,
   GOOGLE_SHEET_ID,
   GOOGLE_SHEETS_CREDENTIALS
@@ -16,17 +18,17 @@ const {
 // https://sandbox-api.3thix.com
 // https://sandbox-pay.3thix.com
 
-// 🔐 CONFIG VALIDATION (MANDATORY) - Enforce Correct 3Thix Domains
-if (!process.env.THIX_API_URL?.startsWith('https://api.3thix.com')) {
-  throw new Error('INVALID CONFIG: THIX_API_URL must be https://api.3thix.com');
+// 1️⃣ Runtime Validation (MANDATORY)
+if (!process.env.FRONTEND_BASE_URL) {
+  throw new Error("FRONTEND_BASE_URL is required");
 }
-if (process.env.THIX_API_URL?.includes('pay.3thix.com')) {
-  throw new Error(
-    'INVALID CONFIG: THIX_API_URL must be https://api.3thix.com (API domain), not pay.3thix.com'
-  );
+
+if (!process.env.THIX_API_URL.startsWith("https://api.3thix.com")) {
+  throw new Error("INVALID CONFIG: THIX_API_URL must be https://api.3thix.com");
 }
-if (!process.env.PAYMENT_PAGE_BASE?.startsWith('https://pay.3thix.com')) {
-  throw new Error('INVALID CONFIG: PAYMENT_PAGE_BASE must start with https://pay.3thix.com');
+
+if (!process.env.PAYMENT_PAGE_BASE.startsWith("https://pay.3thix.com")) {
+  throw new Error("INVALID CONFIG: PAYMENT_PAGE_BASE must be https://pay.3thix.com");
 }
 
 /* ---------- CORS Setup ---------- */
@@ -69,7 +71,9 @@ const SHEET_HEADERS = [
   "EMAIL",
   "NAME",
   "EMAIL_SENT",
-  "EMAIL_SENT_AT"
+  "EMAIL_SENT_AT",
+  "AMOUNT",
+  "CURRENCY"
 ];
 
 let headersInitialized = false;
@@ -78,7 +82,7 @@ async function ensureHeadersExist(sheetsClient) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A1:F1"
+      range: "PAYMENT_TRANSACTIONS!A1:H1"
     });
 
     const existingHeaders = response.data.values?.[0];
@@ -86,7 +90,7 @@ async function ensureHeadersExist(sheetsClient) {
     if (!existingHeaders || !existingHeaders[0]) {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:F1",
+        range: "PAYMENT_TRANSACTIONS!A1:H1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -97,7 +101,7 @@ async function ensureHeadersExist(sheetsClient) {
     try {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:F1",
+        range: "PAYMENT_TRANSACTIONS!A1:H1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -119,7 +123,7 @@ async function appendToGoogleSheets(row) {
 
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:F",
+      range: "PAYMENT_TRANSACTIONS!A2:H",
       valueInputOption: "RAW",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] }
@@ -319,8 +323,8 @@ export default async function handler(req, res) {
    */
   const paymentBlocked = country === "US";
 
-  // Accept name, email, and return_url from request body
-  const { amount, currency, quantity = 1, name, email, return_url } = req.body;
+  // Accept name, email from request body
+  const { amount, currency, quantity = 1, name, email } = req.body;
   const description = "NILA TOKEN - Mindwave";
 
   if (!amount || typeof amount !== "number" || amount <= 0) {
@@ -329,15 +333,6 @@ export default async function handler(req, res) {
 
   if (!currency || !description) {
     return res.status(400).json({ error: "Missing required fields" });
-  }
-
-  // Validate return_url
-  if (!return_url) {
-    return res.status(400).json({ error: "Missing required field: return_url" });
-  }
-
-  if (!return_url.startsWith('https://')) {
-    return res.status(400).json({ error: "return_url must start with https://" });
   }
 
   // Construct callback_url (webhook)
@@ -358,6 +353,9 @@ export default async function handler(req, res) {
   let invoiceId = null;
 
   try {
+    // For 3Thix API call, use base return_url
+    const baseReturnUrl = `${process.env.FRONTEND_BASE_URL.replace(/\/$/, "")}/payment-success.html`;
+
     const response = await fetch(`${THIX_API_URL}/order/payment/create`, {
       method: "POST",
       headers: {
@@ -370,7 +368,7 @@ export default async function handler(req, res) {
         amount: amount.toString(),
         merchant_ref_id,
         callback_url,
-        return_url: encodeURIComponent(return_url),
+        return_url: encodeURIComponent(baseReturnUrl),
         metadata: JSON.stringify(userMetadata),
         cart: [
           {
@@ -409,9 +407,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "PAYMENT_SERVICE_ERROR", message: "Failed to create invoice" });
   }
 
-  // Build full return_url with invoiceId appended
-  const separator = return_url.includes('?') ? '&' : '?';
-  const fullReturnUrl = `${return_url}${separator}invoiceId=${invoiceId}`;
+  // 2️⃣ Build return_url (BACKEND ONLY)
+  const returnUrl =
+    `${process.env.FRONTEND_BASE_URL.replace(/\/$/, "")}` +
+    `/payment-success.html?invoiceId=${invoiceId}`;
 
   // Log INVOICE_CREATED event to TransactionActivityLog
   // This guarantees every attempt is recorded, even if payment never happens
@@ -437,7 +436,9 @@ export default async function handler(req, res) {
     email || "",                  // EMAIL
     name || "",                   // NAME
     "NO",                         // EMAIL_SENT
-    ""                            // EMAIL_SENT_AT
+    "",                           // EMAIL_SENT_AT
+    amount.toString(),            // AMOUNT
+    currency                      // CURRENCY
   ]);
 
   // If payment blocked, log PAYMENT_BLOCKED_US event
@@ -458,8 +459,11 @@ export default async function handler(req, res) {
     ]);
   }
 
-  // Generate Redirect URL Correctly
-  const redirectUrl = `${process.env.PAYMENT_PAGE_BASE}/?invoiceId=${invoiceId}&callbackUrl=${encodeURIComponent(fullReturnUrl)}`;
+  // 3️⃣ Build 3Thix Redirect URL
+  const redirectUrl =
+    `${process.env.PAYMENT_PAGE_BASE}` +
+    `/?invoiceId=${invoiceId}` +
+    `&callbackUrl=${encodeURIComponent(returnUrl)}`;
 
   // ✅ Respond with invoice details and redirect URL
   res.status(200).json({

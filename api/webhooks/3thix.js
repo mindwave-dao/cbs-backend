@@ -46,7 +46,7 @@ function getGoogleSheets() {
   }
 }
 
-/* ---------- Payment Ledger Sheet ---------- */
+/* ---------- PAYMENT_TRANSACTIONS Sheet ---------- */
 const SHEET_HEADERS = [
   "INVOICE_ID",
   "STATUS",
@@ -55,8 +55,7 @@ const SHEET_HEADERS = [
   "EMAIL_SENT",
   "EMAIL_SENT_AT",
   "AMOUNT",
-  "CURRENCY",
-  "CREATED_AT"
+  "CURRENCY"
 ];
 
 let headersInitialized = false;
@@ -65,7 +64,7 @@ async function ensureHeadersExist(sheetsClient) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A1:I1"
+      range: "PAYMENT_TRANSACTIONS!A1:H1"
     });
 
     const existingHeaders = response.data.values?.[0];
@@ -73,18 +72,18 @@ async function ensureHeadersExist(sheetsClient) {
     if (!existingHeaders || !existingHeaders[0]) {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "Transactions!A1:I1",
+        range: "PAYMENT_TRANSACTIONS!A1:H1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
-      console.log("Added headers to Transactions sheet");
+      console.log("Added headers to PAYMENT_TRANSACTIONS sheet");
     }
   } catch (err) {
     console.warn("Header check failed, attempting to add:", err.message);
     try {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "Transactions!A1:I1",
+        range: "PAYMENT_TRANSACTIONS!A1:H1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -106,12 +105,12 @@ async function appendToGoogleSheets(row) {
 
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:O",
+      range: "PAYMENT_TRANSACTIONS!A2:H",
       valueInputOption: "RAW",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] }
     });
-    console.log("Ledger entry added successfully");
+    console.log("PAYMENT_TRANSACTIONS entry added successfully");
   } catch (err) {
     console.error("Google Sheets append error:", err);
     throw err;
@@ -342,123 +341,17 @@ function parseMetadata(metadata) {
 }
 
 /**
- * Check if a payment has already been recorded for this invoice (idempotency check)
- * Returns the existing status if found, null if not found
- */
-async function checkExistingPayment(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return null;
-
-  try {
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:L"  // Skip header row
-    });
-
-    const rows = response.data.values || [];
-
-    // Search for the invoice ID (column G = index 6)
-    for (const row of rows) {
-      if (row[6] === invoiceId) {
-        return row[4] || null;  // Return status (column E = index 4)
-      }
-    }
-
-    return null;  // Not found
-  } catch (err) {
-    console.warn("Error checking existing payment:", err.message);
-    return null;  // Fail open - allow the payment to proceed
-  }
-}
-
-/**
- * Check if email has already been sent for this invoice
- * Returns the EMAIL_SENT status ('YES' or empty/null)
- */
-async function checkEmailSent(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return null;
-
-  try {
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:O"  // Include new columns
-    });
-
-    const rows = response.data.values || [];
-
-    // Search for the invoice ID (column G = index 6)
-    for (const row of rows) {
-      if (row[6] === invoiceId) {
-        return row[12] || null;  // Return EMAIL_SENT (column M = index 12)
-      }
-    }
-
-    return null;  // Not found
-  } catch (err) {
-    console.warn("Error checking email sent status:", err.message);
-    return null;  // Fail open
-  }
-}
-
-/**
- * Mark email as sent in Google Sheets
- */
-async function markEmailAsSent(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return;
-
-  try {
-    // Find the row with this invoice ID
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:O"
-    });
-
-    const rows = response.data.values || [];
-    let rowIndex = -1;
-
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][6] === invoiceId) {  // Column G = index 6
-        rowIndex = i + 2;  // +2 because we start from A2 and arrays are 0-indexed
-        break;
-      }
-    }
-
-    if (rowIndex === -1) {
-      console.warn(`Could not find row for invoice ${invoiceId} to mark email as sent`);
-      return;
-    }
-
-    // Update EMAIL_SENT and EMAIL_SENT_AT columns (M and N = indices 12 and 13)
-    await sheetsClient.spreadsheets.values.update({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: `Transactions!M${rowIndex}:N${rowIndex}`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [["YES", new Date().toISOString()]]
-      }
-    });
-
-    console.log(`Marked email as sent for invoice ${invoiceId}`);
-  } catch (err) {
-    console.error("Error marking email as sent:", err.message);
-    // Don't throw - this shouldn't block the payment flow
-  }
-}
-
-/**
- * Update payment status in Google Sheets
+ * Update payment status in PAYMENT_TRANSACTIONS sheet
  */
 async function updatePaymentStatus(invoiceId, newStatus) {
   const sheetsClient = getGoogleSheets();
   if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return false;
 
   try {
-    // Get all rows from Transactions sheet
+    // Get all rows from PAYMENT_TRANSACTIONS sheet
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:I"  // Skip header row, get all columns
+      range: "PAYMENT_TRANSACTIONS!A2:H"  // Skip header row, get all columns
     });
 
     const rows = response.data.values || [];
@@ -480,7 +373,7 @@ async function updatePaymentStatus(invoiceId, newStatus) {
     // Update STATUS column (column B = index 1)
     await sheetsClient.spreadsheets.values.update({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: `Transactions!B${rowIndex}`,
+      range: `PAYMENT_TRANSACTIONS!B${rowIndex}`,
       valueInputOption: "RAW",
       requestBody: {
         values: [[newStatus]]
@@ -496,7 +389,7 @@ async function updatePaymentStatus(invoiceId, newStatus) {
 }
 
 /**
- * Get payment row data by invoice ID
+ * Get payment row data by invoice ID from PAYMENT_TRANSACTIONS sheet
  */
 async function getPaymentRow(invoiceId) {
   const sheetsClient = getGoogleSheets();
@@ -505,7 +398,7 @@ async function getPaymentRow(invoiceId) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:I"
+      range: "PAYMENT_TRANSACTIONS!A2:H"
     });
 
     const rows = response.data.values || [];
@@ -521,8 +414,7 @@ async function getPaymentRow(invoiceId) {
           emailSent: row[4],
           emailSentAt: row[5],
           amount: row[6],
-          currency: row[7],
-          createdAt: row[8]
+          currency: row[7]
         };
       }
     }

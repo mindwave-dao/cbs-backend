@@ -185,7 +185,7 @@ async function updatePaymentStatus(invoiceId, newStatus) {
 
 /**
  * Find payment status by invoice ID in PAYMENT_TRANSACTIONS sheet
- * Columns: INVOICE_ID | STATUS | EMAIL | NAME | EMAIL_SENT | EMAIL_SENT_AT
+ * Columns: INVOICE_ID | STATUS | EMAIL | NAME | EMAIL_SENT | EMAIL_SENT_AT | AMOUNT | CURRENCY
  */
 async function findPaymentStatus(invoiceId) {
   const sheetsClient = getGoogleSheets();
@@ -196,7 +196,7 @@ async function findPaymentStatus(invoiceId) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:F"  // Skip header row
+      range: "PAYMENT_TRANSACTIONS!A2:H"  // Skip header row, include all columns
     });
 
     const rows = response.data.values || [];
@@ -211,7 +211,9 @@ async function findPaymentStatus(invoiceId) {
           email: row[2] || '',          // Column C - EMAIL
           name: row[3] || '',           // Column D - NAME
           emailSent: row[4] || 'NO',    // Column E - EMAIL_SENT
-          emailSentAt: row[5] || ''     // Column F - EMAIL_SENT_AT
+          emailSentAt: row[5] || '',    // Column F - EMAIL_SENT_AT
+          amount: row[6] || '',         // Column G - AMOUNT
+          currency: row[7] || ''        // Column H - CURRENCY
         };
       }
     }
@@ -289,8 +291,8 @@ export default async function handler(req, res) {
           invoiceId,
           sheetData.email,
           sheetData.name,
-          '', // amount not in sheet
-          ''  // currency not in sheet
+          sheetData.amount,
+          sheetData.currency
         );
       }
     }
