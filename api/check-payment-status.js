@@ -1,12 +1,4 @@
 import { google } from "googleapis";
-import fetch from "node-fetch";
-import { processSuccessfulPayment } from "../lib/email.js";
-
-const {
-  GOOGLE_SHEET_ID,
-  GOOGLE_SHEETS_CREDENTIALS,
-  THIX_API_KEY
-} = process.env;
 
 // Hardcoded as per rules
 const THIX_API_URL = 'https://api.3thix.com';
@@ -24,27 +16,22 @@ function setCorsHeaders(res) {
   res.setHeader('Access-Control-Max-Age', '86400');
 }
 
-/* ---------- Google Sheets Setup (lazy init) ---------- */
-let sheets = null;
-
-function getGoogleSheets() {
-  if (sheets) return sheets;
-  
-  if (!GOOGLE_SHEETS_CREDENTIALS) {
-    console.warn("GOOGLE_SHEETS_CREDENTIALS not set, cannot check payment status");
-    return null;
-  }
-  
+/* ---------- Safe Helper Functions ---------- */
+async function getSheetsClient() {
   try {
-    const credentials = JSON.parse(GOOGLE_SHEETS_CREDENTIALS);
+    const creds = process.env.GOOGLE_SHEETS_CREDENTIALS;
+    if (!creds) {
+      console.warn("GOOGLE_SHEETS_CREDENTIALS not set");
+      return null;
+    }
+    const credentials = JSON.parse(creds);
     const auth = new google.auth.GoogleAuth({
       credentials,
       scopes: ["https://www.googleapis.com/auth/spreadsheets"]
     });
-    sheets = google.sheets({ version: "v4", auth });
-    return sheets;
-  } catch (err) {
-    console.error("Failed to initialize Google Sheets:", err);
+    return google.sheets({ version: "v4", auth });
+  } catch (e) {
+    console.error("[Sheets Init Failed]", e);
     return null;
   }
 }
@@ -57,16 +44,14 @@ function getGoogleSheets() {
 
 
 
-/* ---------- Helper Functions ---------- */
-async function findRowByInvoiceId(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID) {
+async function findRowByInvoiceIdSafe(sheets, invoiceId) {
+  if (!sheets || !process.env.GOOGLE_SHEET_ID) {
     return null;
   }
 
   try {
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: "PAYMENT_TRANSACTIONS!A2:H"  // Skip header row, include all columns
     });
 
@@ -95,8 +80,9 @@ async function findRowByInvoiceId(invoiceId) {
   }
 }
 
-async function check3Thix(invoiceId) {
-  if (!THIX_API_KEY || !THIX_API_URL || !invoiceId) {
+async function check3ThixSafe(invoiceId) {
+  const apiKey = process.env.THIX_API_KEY;
+  if (!apiKey || !THIX_API_URL || !invoiceId) {
     console.error("❌ 3Thix API not configured or missing invoiceId");
     return 'PENDING';
   }
@@ -119,7 +105,7 @@ async function check3Thix(invoiceId) {
           method: "GET",
           headers: {
             "Content-Type": "application/json",
-            "x-api-key": THIX_API_KEY
+            "x-api-key": apiKey
           }
         });
 
@@ -159,14 +145,13 @@ async function check3Thix(invoiceId) {
   }
 }
 
-async function markSuccessInSheet(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return;
+async function markSuccessSafe(sheets, invoiceId) {
+  if (!sheets || !process.env.GOOGLE_SHEET_ID || !invoiceId) return;
 
   try {
     // Get all rows from PAYMENT_TRANSACTIONS sheet
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: "PAYMENT_TRANSACTIONS!A2:H"  // Skip header row, get all columns
     });
 
@@ -187,8 +172,8 @@ async function markSuccessInSheet(invoiceId) {
     }
 
     // Update STATUS column (column B = index 1)
-    await sheetsClient.spreadsheets.values.update({
-      spreadsheetId: GOOGLE_SHEET_ID,
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `PAYMENT_TRANSACTIONS!B${rowIndex}`,
       valueInputOption: "RAW",
       requestBody: {
@@ -202,14 +187,13 @@ async function markSuccessInSheet(invoiceId) {
   }
 }
 
-async function markFailedInSheet(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return;
+async function markFailedSafe(sheets, invoiceId) {
+  if (!sheets || !process.env.GOOGLE_SHEET_ID || !invoiceId) return;
 
   try {
     // Get all rows from PAYMENT_TRANSACTIONS sheet
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: "PAYMENT_TRANSACTIONS!A2:H"  // Skip header row, get all columns
     });
 
@@ -230,8 +214,8 @@ async function markFailedInSheet(invoiceId) {
     }
 
     // Update STATUS column (column B = index 1)
-    await sheetsClient.spreadsheets.values.update({
-      spreadsheetId: GOOGLE_SHEET_ID,
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `PAYMENT_TRANSACTIONS!B${rowIndex}`,
       valueInputOption: "RAW",
       requestBody: {
@@ -245,14 +229,17 @@ async function markFailedInSheet(invoiceId) {
   }
 }
 
-async function sendEmailsIfNotSent(invoiceId) {
+async function sendEmailsSafe(sheets, invoiceId) {
   try {
     // Get the row data to check if emails were already sent
-    const row = await findRowByInvoiceId(invoiceId);
+    const row = await findRowByInvoiceIdSafe(sheets, invoiceId);
     if (!row) return;
 
     // Only send if not already sent
     if (row.EMAIL_SENT !== 'YES') {
+      // Lazy-load email module to prevent import-time crashes
+      const { processSuccessfulPayment } = await import("../lib/email.js");
+
       await processSuccessfulPayment(
         invoiceId,
         row.EMAIL,
@@ -260,6 +247,37 @@ async function sendEmailsIfNotSent(invoiceId) {
         row.AMOUNT,
         row.CURRENCY
       );
+
+      // Mark email as sent in the sheet
+      if (sheets && process.env.GOOGLE_SHEET_ID) {
+        // Get all rows to find the row index
+        const response = await sheets.spreadsheets.values.get({
+          spreadsheetId: process.env.GOOGLE_SHEET_ID,
+          range: "PAYMENT_TRANSACTIONS!A2:H"
+        });
+
+        const rows = response.data.values || [];
+        let rowIndex = -1;
+
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i][0] === invoiceId) {
+            rowIndex = i + 2; // +2 because we start from A2
+            break;
+          }
+        }
+
+        if (rowIndex !== -1) {
+          // Update EMAIL_SENT (E) and EMAIL_SENT_AT (F)
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            range: `PAYMENT_TRANSACTIONS!E${rowIndex}:F${rowIndex}`,
+            valueInputOption: "RAW",
+            requestBody: {
+              values: [["YES", new Date().toISOString()]]
+            }
+          });
+        }
+      }
     }
   } catch (err) {
     console.error("Error sending emails:", err);
@@ -288,44 +306,37 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "invoiceId required" });
     }
 
-    // 1. Read from Google Sheet FIRST
-    const row = await findRowByInvoiceId(invoiceId);
+    const sheets = await getSheetsClient();
+    if (!sheets) {
+      return res.json({ invoiceId, status: "PENDING" });
+    }
 
+    const row = await findRowByInvoiceIdSafe(sheets, invoiceId);
     if (!row) {
       return res.status(404).json({ invoiceId, status: "NOT_FOUND" });
     }
 
-    const currentStatus = row.STATUS;
-
-    // 2. If already final → return immediately
-    if (currentStatus === "SUCCESS") {
-      return res.json({ invoiceId, status: "SUCCESS" });
+    if (row.STATUS === "SUCCESS" || row.STATUS === "FAILED") {
+      return res.json({ invoiceId, status: row.STATUS });
     }
 
-    if (currentStatus === "FAILED") {
-      return res.json({ invoiceId, status: "FAILED" });
-    }
-
-    // 3. Only now check 3Thix
-    const thixStatus = await check3Thix(invoiceId);
+    const thixStatus = await check3ThixSafe(invoiceId);
 
     if (thixStatus === "SUCCESS") {
-      await markSuccessInSheet(invoiceId);
-      await sendEmailsIfNotSent(invoiceId);
+      await markSuccessSafe(sheets, invoiceId);
+      await sendEmailsSafe(sheets, invoiceId);
       return res.json({ invoiceId, status: "SUCCESS" });
     }
 
     if (thixStatus === "FAILED") {
-      await markFailedInSheet(invoiceId);
+      await markFailedSafe(sheets, invoiceId);
       return res.json({ invoiceId, status: "FAILED" });
     }
 
-    // 4. Still pending
     return res.json({ invoiceId, status: "PENDING" });
 
   } catch (err) {
-    console.error("[check-payment-status]", err);
-    // NEVER FAIL USER FLOW
+    console.error("[check-payment-status CRASH]", err);
     return res.json({ invoiceId: req.query.invoiceId, status: "PENDING" });
   }
 }

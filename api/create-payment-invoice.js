@@ -1,35 +1,15 @@
-import fetch from "node-fetch";
 import { google } from "googleapis";
+import fetch from "node-fetch";
 import crypto from "crypto";
 import { isGeoRestricted } from "../lib/geo.js";
-
-// 🔐 REQUIRED ENV VARIABLES
-const {
-  THIX_API_KEY,
-  THIX_API_URL,
-  PAYMENT_PAGE_BASE,
-  FRONTEND_BASE_URL,
-  VERCEL_URL,
-  GOOGLE_SHEET_ID,
-  GOOGLE_SHEETS_CREDENTIALS
-} = process.env;
 
 // SANDBOX (DO NOT USE IN PROD)
 // https://sandbox-api.3thix.com
 // https://sandbox-pay.3thix.com
 
-// 1️⃣ Runtime Validation (MANDATORY)
-if (!process.env.FRONTEND_BASE_URL) {
-  throw new Error("FRONTEND_BASE_URL is required");
-}
-
-if (!process.env.THIX_API_URL.startsWith("https://api.3thix.com")) {
-  throw new Error("INVALID CONFIG: THIX_API_URL must be https://api.3thix.com");
-}
-
-if (!process.env.PAYMENT_PAGE_BASE.startsWith("https://pay.3thix.com")) {
-  throw new Error("INVALID CONFIG: PAYMENT_PAGE_BASE must be https://pay.3thix.com");
-}
+// 🔐 REQUIRED ENV VARIABLES (module scope for getGoogleSheets)
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const GOOGLE_SHEETS_CREDENTIALS = process.env.GOOGLE_SHEETS_CREDENTIALS;
 
 /* ---------- CORS Setup ---------- */
 function setCorsHeaders(res) {
@@ -304,14 +284,22 @@ export default async function handler(req, res) {
   }
 
   // Validate required environment variables for payment
+  const THIX_API_KEY = process.env.THIX_API_KEY;
+  const THIX_API_URL = process.env.THIX_API_URL;
+  const PAYMENT_PAGE_BASE = process.env.PAYMENT_PAGE_BASE;
+  const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL;
+  const VERCEL_URL = process.env.VERCEL_URL;
+  const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+  const GOOGLE_SHEETS_CREDENTIALS = process.env.GOOGLE_SHEETS_CREDENTIALS;
+
   if (!THIX_API_KEY || !THIX_API_URL) {
     console.error("Missing THIX_API_KEY or THIX_API_URL environment variables");
     return res.status(500).json({ error: "Payment service not configured" });
   }
 
   // Logging (Temporary but Mandatory)
-  console.log('3Thix API URL:', process.env.THIX_API_URL);
-  console.log('3Thix Request:', `${process.env.THIX_API_URL}/order/payment/create`);
+  console.log('3Thix API URL:', THIX_API_URL);
+  console.log('3Thix Request:', `${THIX_API_URL}/order/payment/create`);
 
   const country = req.headers["x-vercel-ip-country"] || "";
   const userAgent = req.headers["user-agent"] || "";
@@ -351,11 +339,10 @@ export default async function handler(req, res) {
   };
 
   let invoiceId = null;
+  let returnUrl = null;
 
   try {
-    // For 3Thix API call, use base return_url
-    const baseReturnUrl = `${process.env.FRONTEND_BASE_URL.replace(/\/$/, "")}/payment-success.html`;
-
+    // FIRST: Create invoice with 3Thix to get invoiceId
     const response = await fetch(`${THIX_API_URL}/order/payment/create`, {
       method: "POST",
       headers: {
@@ -367,8 +354,8 @@ export default async function handler(req, res) {
         currency,
         amount: amount.toString(),
         merchant_ref_id,
-        callback_url,
-        return_url: encodeURIComponent(baseReturnUrl),
+        callback_url,  // webhook URL
+        return_url: "https://example.com/pending", // temporary placeholder
         metadata: JSON.stringify(userMetadata),
         cart: [
           {
@@ -393,77 +380,103 @@ export default async function handler(req, res) {
       throw new Error("Invoice ID missing from 3Thix response");
     }
 
+    // SECOND: Build the FINAL return URL with invoiceId
+    returnUrl = `${FRONTEND_BASE_URL.replace(/\/$/, "")}/payment-success.html?invoiceId=${invoiceId}`;
+
+    // THIRD: Update the invoice with the correct return URL
+    try {
+      await fetch(`${THIX_API_URL}/order/payment/update/${invoiceId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": THIX_API_KEY
+        },
+        body: JSON.stringify({
+          return_url: returnUrl  // Raw URL, no encodeURIComponent
+        })
+      });
+    } catch (updateErr) {
+      console.warn("Failed to update return_url, proceeding anyway:", updateErr.message);
+    }
+
   // Store user info in Google Sheets (Additional Info Tab)
-  await appendToAdditionalInfoSheet([
-    merchant_ref_id,
-    invoiceId,
-    name,
-    email,
-    new Date().toISOString()
-  ]);
+  try {
+    await appendToAdditionalInfoSheet([
+      merchant_ref_id,
+      invoiceId,
+      name,
+      email,
+      new Date().toISOString()
+    ]);
+  } catch (e) {
+    console.error("Additional info sheet failed:", e);
+  }
 
   } catch (err) {
     console.error("3Thix error:", err);
     return res.status(500).json({ error: "PAYMENT_SERVICE_ERROR", message: "Failed to create invoice" });
   }
 
-  // 2️⃣ Build return_url (BACKEND ONLY)
-  const returnUrl =
-    `${process.env.FRONTEND_BASE_URL.replace(/\/$/, "")}` +
-    `/payment-success.html?invoiceId=${invoiceId}`;
-
   // Log INVOICE_CREATED event to TransactionActivityLog
-  // This guarantees every attempt is recorded, even if payment never happens
-  await appendToActivityLog([
-    crypto.randomUUID(),           // activity_id
-    invoiceId,                     // invoice_id
-    merchant_ref_id,               // merchant_ref_id
-    "INVOICE_CREATED",             // event_type
-    amount.toString(),             // amount
-    currency,                      // currency
-    "3THIX",                       // gateway
-    country,                       // country
-    userAgent,                     // user_agent
-    ipAddress,                     // ip
-    JSON.stringify(userMetadata),  // metadata (includes name, email, paymentBlocked)
-    new Date().toISOString()       // timestamp
-  ]);
+  try {
+    await appendToActivityLog([
+      crypto.randomUUID(),           // activity_id
+      invoiceId,                     // invoice_id
+      merchant_ref_id,               // merchant_ref_id
+      "INVOICE_CREATED",             // event_type
+      amount.toString(),             // amount
+      currency,                      // currency
+      "3THIX",                       // gateway
+      country,                       // country
+      userAgent,                     // user_agent
+      ipAddress,                     // ip
+      JSON.stringify(userMetadata),  // metadata (includes name, email, paymentBlocked)
+      new Date().toISOString()       // timestamp
+    ]);
+  } catch (e) {
+    console.error("Activity log failed:", e);
+  }
 
   // Insert row into PAYMENT_TRANSACTIONS sheet
-  await appendToGoogleSheets([
-    invoiceId,                    // INVOICE_ID
-    "PENDING",                    // STATUS
-    email || "",                  // EMAIL
-    name || "",                   // NAME
-    "NO",                         // EMAIL_SENT
-    "",                           // EMAIL_SENT_AT
-    amount.toString(),            // AMOUNT
-    currency                      // CURRENCY
-  ]);
+  try {
+    await appendToGoogleSheets([
+      invoiceId,                    // INVOICE_ID
+      "PENDING",                    // STATUS
+      email || "",                  // EMAIL
+      name || "",                   // NAME
+      "NO",                         // EMAIL_SENT
+      "",                           // EMAIL_SENT_AT
+      amount.toString(),            // AMOUNT
+      currency                      // CURRENCY
+    ]);
+  } catch (e) {
+    console.error("Payment transactions sheet failed:", e);
+  }
 
   // If payment blocked, log PAYMENT_BLOCKED_US event
   if (paymentBlocked) {
-    await appendToActivityLog([
-      crypto.randomUUID(),
-      invoiceId,
-      merchant_ref_id,
-      "PAYMENT_BLOCKED_US",
-      amount.toString(),
-      currency,
-      "3THIX",
-      country,
-      userAgent,
-      ipAddress,
-      JSON.stringify({ blocked: true }),
-      new Date().toISOString()
-    ]);
+    try {
+      await appendToActivityLog([
+        crypto.randomUUID(),
+        invoiceId,
+        merchant_ref_id,
+        "PAYMENT_BLOCKED_US",
+        amount.toString(),
+        currency,
+        "3THIX",
+        country,
+        userAgent,
+        ipAddress,
+        JSON.stringify({ blocked: true }),
+        new Date().toISOString()
+      ]);
+    } catch (e) {
+      console.error("Blocked payment log failed:", e);
+    }
   }
 
-  // 3️⃣ Build 3Thix Redirect URL
-  const redirectUrl =
-    `${process.env.PAYMENT_PAGE_BASE}` +
-    `/?invoiceId=${invoiceId}` +
-    `&callbackUrl=${encodeURIComponent(returnUrl)}`;
+  // Build 3Thix Redirect URL (3Thix already knows the return_url)
+  const redirectUrl = `${PAYMENT_PAGE_BASE}/?invoiceId=${invoiceId}`;
 
   // ✅ Respond with invoice details and redirect URL
   res.status(200).json({
