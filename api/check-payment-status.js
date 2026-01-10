@@ -1,12 +1,18 @@
 import { google } from "googleapis";
+import { processSuccessfulPayment } from "../lib/email.js";
 
-// Hardcoded as per rules
-const THIX_API_URL = 'https://api.3thix.com';
+// Environment validation (MANDATORY)
+const THIX_API_URL = process.env.THIX_API_URL;
+const THIX_API_KEY = process.env.THIX_API_KEY;
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const GOOGLE_SHEETS_CREDENTIALS = process.env.GOOGLE_SHEETS_CREDENTIALS;
 
-// SANDBOX references (commented for future debugging):
-// THIX_API_URL=https://sandbox-api.3thix.com
-// THIX_API_KEY=SANDBOX_API_KEY
-// PAYMENT_PAGE_BASE=https://sandbox-pay.3thix.com
+if (!THIX_API_URL.startsWith('https://api.3thix.com')) {
+  throw new Error('INVALID CONFIG: THIX_API_URL must be https://api.3thix.com');
+}
+if (!THIX_API_KEY || !GOOGLE_SHEET_ID || !GOOGLE_SHEETS_CREDENTIALS) {
+  throw new Error('INVALID CONFIG: Missing required environment variables');
+}
 
 /* ---------- CORS Setup ---------- */
 function setCorsHeaders(res) {
@@ -45,14 +51,14 @@ async function getSheetsClient() {
 
 
 async function findRowByInvoiceIdSafe(sheets, invoiceId) {
-  if (!sheets || !process.env.GOOGLE_SHEET_ID) {
+  if (!sheets || !GOOGLE_SHEET_ID) {
     return null;
   }
 
   try {
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:H"  // Skip header row, include all columns
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "PAYMENT_TRANSACTIONS!A2:F"  // Skip header row, 6 columns
     });
 
     const rows = response.data.values || [];
@@ -66,9 +72,7 @@ async function findRowByInvoiceIdSafe(sheets, invoiceId) {
           EMAIL: row[2] || '',
           NAME: row[3] || '',
           EMAIL_SENT: row[4] || 'NO',
-          EMAIL_SENT_AT: row[5] || '',
-          AMOUNT: row[6] || '',
-          CURRENCY: row[7] || ''
+          EMAIL_SENT_AT: row[5] || ''
         };
       }
     }
@@ -145,14 +149,14 @@ async function check3ThixSafe(invoiceId) {
   }
 }
 
-async function markSuccessSafe(sheets, invoiceId) {
-  if (!sheets || !process.env.GOOGLE_SHEET_ID || !invoiceId) return;
+async function updateStatusSafe(sheets, invoiceId, status) {
+  if (!sheets || !GOOGLE_SHEET_ID || !invoiceId) return false;
 
   try {
     // Get all rows from PAYMENT_TRANSACTIONS sheet
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:H"  // Skip header row, get all columns
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "PAYMENT_TRANSACTIONS!A2:F"  // Skip header row, 6 columns
     });
 
     const rows = response.data.values || [];
@@ -168,64 +172,24 @@ async function markSuccessSafe(sheets, invoiceId) {
 
     if (rowIndex === -1) {
       console.warn(`Could not find row for invoice ${invoiceId}`);
-      return;
+      return false;
     }
 
     // Update STATUS column (column B = index 1)
     await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      spreadsheetId: GOOGLE_SHEET_ID,
       range: `PAYMENT_TRANSACTIONS!B${rowIndex}`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [['SUCCESS']]
+        values: [[status]]
       }
     });
 
-    console.log(`Updated status for invoice ${invoiceId} to SUCCESS`);
+    console.log(`Updated status for invoice ${invoiceId} to ${status}`);
+    return true;
   } catch (err) {
     console.error("Error updating payment status:", err.message);
-  }
-}
-
-async function markFailedSafe(sheets, invoiceId) {
-  if (!sheets || !process.env.GOOGLE_SHEET_ID || !invoiceId) return;
-
-  try {
-    // Get all rows from PAYMENT_TRANSACTIONS sheet
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:H"  // Skip header row, get all columns
-    });
-
-    const rows = response.data.values || [];
-    let rowIndex = -1;
-
-    // Find the row with matching INVOICE_ID (column A = index 0)
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] === invoiceId) {
-        rowIndex = i + 2;  // +2 because we start from A2 and arrays are 0-indexed
-        break;
-      }
-    }
-
-    if (rowIndex === -1) {
-      console.warn(`Could not find row for invoice ${invoiceId}`);
-      return;
-    }
-
-    // Update STATUS column (column B = index 1)
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `PAYMENT_TRANSACTIONS!B${rowIndex}`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [['FAILED']]
-      }
-    });
-
-    console.log(`Updated status for invoice ${invoiceId} to FAILED`);
-  } catch (err) {
-    console.error("Error updating payment status:", err.message);
+    return false;
   }
 }
 
@@ -235,25 +199,22 @@ async function sendEmailsSafe(sheets, invoiceId) {
     const row = await findRowByInvoiceIdSafe(sheets, invoiceId);
     if (!row) return;
 
+    console.log(`[EMAIL CHECK] invoiceId=${invoiceId} emailSent=${row.EMAIL_SENT}`);
+
     // Only send if not already sent
     if (row.EMAIL_SENT !== 'YES') {
-      // Lazy-load email module to prevent import-time crashes
-      const { processSuccessfulPayment } = await import("../lib/email.js");
-
       await processSuccessfulPayment(
         invoiceId,
         row.EMAIL,
-        row.NAME,
-        row.AMOUNT,
-        row.CURRENCY
+        row.NAME
       );
 
       // Mark email as sent in the sheet
-      if (sheets && process.env.GOOGLE_SHEET_ID) {
+      if (sheets && GOOGLE_SHEET_ID) {
         // Get all rows to find the row index
         const response = await sheets.spreadsheets.values.get({
-          spreadsheetId: process.env.GOOGLE_SHEET_ID,
-          range: "PAYMENT_TRANSACTIONS!A2:H"
+          spreadsheetId: GOOGLE_SHEET_ID,
+          range: "PAYMENT_TRANSACTIONS!A2:F"
         });
 
         const rows = response.data.values || [];
@@ -269,13 +230,14 @@ async function sendEmailsSafe(sheets, invoiceId) {
         if (rowIndex !== -1) {
           // Update EMAIL_SENT (E) and EMAIL_SENT_AT (F)
           await sheets.spreadsheets.values.update({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            spreadsheetId: GOOGLE_SHEET_ID,
             range: `PAYMENT_TRANSACTIONS!E${rowIndex}:F${rowIndex}`,
             valueInputOption: "RAW",
             requestBody: {
               values: [["YES", new Date().toISOString()]]
             }
           });
+          console.log(`[EMAIL SENT] invoiceId=${invoiceId}`);
         }
       }
     }
@@ -311,29 +273,19 @@ export default async function handler(req, res) {
       return res.json({ invoiceId, status: "PENDING" });
     }
 
-    const row = await findRowByInvoiceIdSafe(sheets, invoiceId);
-    if (!row) {
-      return res.status(404).json({ invoiceId, status: "NOT_FOUND" });
-    }
-
-    if (row.STATUS === "SUCCESS" || row.STATUS === "FAILED") {
-      return res.json({ invoiceId, status: row.STATUS });
-    }
-
+    // Always call 3Thix API first
     const thixStatus = await check3ThixSafe(invoiceId);
+    console.log(`[STATUS CHECK] invoiceId=${invoiceId} status=${thixStatus}`);
 
+    // Update Google Sheet STATUS
+    await updateStatusSafe(sheets, invoiceId, thixStatus);
+
+    // Trigger email logic only when SUCCESS
     if (thixStatus === "SUCCESS") {
-      await markSuccessSafe(sheets, invoiceId);
       await sendEmailsSafe(sheets, invoiceId);
-      return res.json({ invoiceId, status: "SUCCESS" });
     }
 
-    if (thixStatus === "FAILED") {
-      await markFailedSafe(sheets, invoiceId);
-      return res.json({ invoiceId, status: "FAILED" });
-    }
-
-    return res.json({ invoiceId, status: "PENDING" });
+    return res.json({ invoiceId, status: thixStatus });
 
   } catch (err) {
     console.error("[check-payment-status CRASH]", err);

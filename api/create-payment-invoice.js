@@ -1,15 +1,27 @@
 import { google } from "googleapis";
 import fetch from "node-fetch";
 import crypto from "crypto";
-import { isGeoRestricted } from "../lib/geo.js";
 
-// SANDBOX (DO NOT USE IN PROD)
-// https://sandbox-api.3thix.com
-// https://sandbox-pay.3thix.com
-
-// 🔐 REQUIRED ENV VARIABLES (module scope for getGoogleSheets)
+// 🔐 REQUIRED ENV VARIABLES (MANDATORY)
+const THIX_API_URL = process.env.THIX_API_URL;
+const PAYMENT_PAGE_BASE = process.env.PAYMENT_PAGE_BASE;
+const THIX_API_KEY = process.env.THIX_API_KEY;
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const EMAIL_FROM = process.env.EMAIL_FROM;
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const GOOGLE_SHEETS_CREDENTIALS = process.env.GOOGLE_SHEETS_CREDENTIALS;
+
+// Environment validation (MANDATORY)
+if (!THIX_API_URL.startsWith('https://api.3thix.com')) {
+  throw new Error('INVALID CONFIG: THIX_API_URL must be https://api.3thix.com');
+}
+if (!PAYMENT_PAGE_BASE.startsWith('https://pay.3thix.com')) {
+  throw new Error('INVALID CONFIG: PAYMENT_PAGE_BASE must be https://pay.3thix.com');
+}
+if (!THIX_API_KEY || !BREVO_API_KEY || !EMAIL_FROM || !ADMIN_EMAIL || !GOOGLE_SHEET_ID || !GOOGLE_SHEETS_CREDENTIALS) {
+  throw new Error('INVALID CONFIG: Missing required environment variables');
+}
 
 /* ---------- CORS Setup ---------- */
 function setCorsHeaders(res) {
@@ -51,9 +63,7 @@ const SHEET_HEADERS = [
   "EMAIL",
   "NAME",
   "EMAIL_SENT",
-  "EMAIL_SENT_AT",
-  "AMOUNT",
-  "CURRENCY"
+  "EMAIL_SENT_AT"
 ];
 
 let headersInitialized = false;
@@ -62,7 +72,7 @@ async function ensureHeadersExist(sheetsClient) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A1:H1"
+      range: "PAYMENT_TRANSACTIONS!A1:F1"
     });
 
     const existingHeaders = response.data.values?.[0];
@@ -70,7 +80,7 @@ async function ensureHeadersExist(sheetsClient) {
     if (!existingHeaders || !existingHeaders[0]) {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:H1",
+        range: "PAYMENT_TRANSACTIONS!A1:F1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -81,7 +91,7 @@ async function ensureHeadersExist(sheetsClient) {
     try {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:H1",
+        range: "PAYMENT_TRANSACTIONS!A1:F1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -103,7 +113,7 @@ async function appendToGoogleSheets(row) {
 
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:H",
+      range: "PAYMENT_TRANSACTIONS!A2:F",
       valueInputOption: "RAW",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] }
@@ -399,18 +409,16 @@ export default async function handler(req, res) {
       console.warn("Failed to update return_url, proceeding anyway:", updateErr.message);
     }
 
-  // Store user info in Google Sheets (Additional Info Tab)
-  try {
-    await appendToAdditionalInfoSheet([
-      merchant_ref_id,
+    // Insert immediately after invoice creation
+    console.log(`[INVOICE CREATED] invoiceId=${invoiceId}`);
+    await appendToGoogleSheets([
       invoiceId,
-      name,
-      email,
-      new Date().toISOString()
+      "PENDING",
+      email || "",
+      name || "",
+      "NO",
+      ""
     ]);
-  } catch (e) {
-    console.error("Additional info sheet failed:", e);
-  }
 
   } catch (err) {
     console.error("3Thix error:", err);
@@ -437,22 +445,6 @@ export default async function handler(req, res) {
     console.error("Activity log failed:", e);
   }
 
-  // Insert row into PAYMENT_TRANSACTIONS sheet
-  try {
-    await appendToGoogleSheets([
-      invoiceId,                    // INVOICE_ID
-      "PENDING",                    // STATUS
-      email || "",                  // EMAIL
-      name || "",                   // NAME
-      "NO",                         // EMAIL_SENT
-      "",                           // EMAIL_SENT_AT
-      amount.toString(),            // AMOUNT
-      currency                      // CURRENCY
-    ]);
-  } catch (e) {
-    console.error("Payment transactions sheet failed:", e);
-  }
-
   // If payment blocked, log PAYMENT_BLOCKED_US event
   if (paymentBlocked) {
     try {
@@ -475,8 +467,8 @@ export default async function handler(req, res) {
     }
   }
 
-  // Build 3Thix Redirect URL (3Thix already knows the return_url)
-  const redirectUrl = `${PAYMENT_PAGE_BASE}/?invoiceId=${invoiceId}`;
+  // Build 3Thix Redirect URL
+  const redirectUrl = `${PAYMENT_PAGE_BASE}?invoiceId=${invoiceId}&callbackUrl=${encodeURIComponent(returnUrl)}`;
 
   // ✅ Respond with invoice details and redirect URL
   res.status(200).json({

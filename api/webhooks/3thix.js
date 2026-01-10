@@ -2,11 +2,18 @@ import { google } from "googleapis";
 import crypto from "crypto";
 import { processSuccessfulPayment } from "../lib/email.js";
 
-const {
-  GOOGLE_SHEET_ID,
-  GOOGLE_SHEETS_CREDENTIALS,
-  THIX_WEBHOOK_SECRET
-} = process.env;
+// Environment validation (MANDATORY)
+const THIX_API_URL = process.env.THIX_API_URL;
+const THIX_API_KEY = process.env.THIX_API_KEY;
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const GOOGLE_SHEETS_CREDENTIALS = process.env.GOOGLE_SHEETS_CREDENTIALS;
+
+if (!THIX_API_URL.startsWith('https://api.3thix.com')) {
+  throw new Error('INVALID CONFIG: THIX_API_URL must be https://api.3thix.com');
+}
+if (!THIX_API_KEY || !GOOGLE_SHEET_ID || !GOOGLE_SHEETS_CREDENTIALS) {
+  throw new Error('INVALID CONFIG: Missing required environment variables');
+}
 
 // SANDBOX references (commented for future debugging):
 // THIX_API_URL=https://sandbox-api.3thix.com
@@ -53,9 +60,7 @@ const SHEET_HEADERS = [
   "EMAIL",
   "NAME",
   "EMAIL_SENT",
-  "EMAIL_SENT_AT",
-  "AMOUNT",
-  "CURRENCY"
+  "EMAIL_SENT_AT"
 ];
 
 let headersInitialized = false;
@@ -64,7 +69,7 @@ async function ensureHeadersExist(sheetsClient) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A1:H1"
+      range: "PAYMENT_TRANSACTIONS!A1:F1"
     });
 
     const existingHeaders = response.data.values?.[0];
@@ -72,7 +77,7 @@ async function ensureHeadersExist(sheetsClient) {
     if (!existingHeaders || !existingHeaders[0]) {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:H1",
+        range: "PAYMENT_TRANSACTIONS!A1:F1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -83,7 +88,7 @@ async function ensureHeadersExist(sheetsClient) {
     try {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:H1",
+        range: "PAYMENT_TRANSACTIONS!A1:F1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -105,7 +110,7 @@ async function appendToGoogleSheets(row) {
 
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:H",
+      range: "PAYMENT_TRANSACTIONS!A2:F",
       valueInputOption: "RAW",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] }
@@ -351,7 +356,7 @@ async function updatePaymentStatus(invoiceId, newStatus) {
     // Get all rows from PAYMENT_TRANSACTIONS sheet
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:H"  // Skip header row, get all columns
+      range: "PAYMENT_TRANSACTIONS!A2:F"  // Skip header row, 6 columns
     });
 
     const rows = response.data.values || [];
@@ -398,7 +403,7 @@ async function getPaymentRow(invoiceId) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:H"
+      range: "PAYMENT_TRANSACTIONS!A2:F"
     });
 
     const rows = response.data.values || [];
@@ -412,9 +417,7 @@ async function getPaymentRow(invoiceId) {
           email: row[2],
           name: row[3],
           emailSent: row[4],
-          emailSentAt: row[5],
-          amount: row[6],
-          currency: row[7]
+          emailSentAt: row[5]
         };
       }
     }
@@ -492,9 +495,7 @@ export default async function handler(req, res) {
         const emailResult = await processSuccessfulPayment(
           finalInvoiceId,
           row.email,
-          row.name,
-          row.amount,
-          row.currency
+          row.name
         );
 
         console.log(`📧 Webhook email result for ${finalInvoiceId}: ${emailResult.emailSent ? 'SENT' : 'NOT_SENT'}`);
