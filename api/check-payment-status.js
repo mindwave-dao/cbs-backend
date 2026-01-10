@@ -5,9 +5,11 @@ import { processSuccessfulPayment } from "../lib/email.js";
 const {
   GOOGLE_SHEET_ID,
   GOOGLE_SHEETS_CREDENTIALS,
-  THIX_API_KEY,
-  THIX_API_URL
+  THIX_API_KEY
 } = process.env;
+
+// Hardcoded as per rules
+const THIX_API_URL = 'https://api.3thix.com';
 
 // SANDBOX references (commented for future debugging):
 // THIX_API_URL=https://sandbox-api.3thix.com
@@ -49,83 +51,7 @@ function getGoogleSheets() {
 
 
 
-/**
- * Mark email as sent in Google Sheets
- */
-async function markEmailAsSent(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return;
 
-  try {
-    // Find the row with this invoice ID
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:O"
-    });
-
-    const rows = response.data.values || [];
-    let rowIndex = -1;
-
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][6] === invoiceId) {  // Column G = index 6
-        rowIndex = i + 2;  // +2 because we start from A2 and arrays are 0-indexed
-        break;
-      }
-    }
-
-    if (rowIndex === -1) {
-      console.warn(`Could not find row for invoice ${invoiceId} to mark email as sent`);
-      return;
-    }
-
-    // Update EMAIL_SENT and EMAIL_SENT_AT columns (M and N = indices 12 and 13)
-    await sheetsClient.spreadsheets.values.update({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: `Transactions!M${rowIndex}:N${rowIndex}`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [["YES", new Date().toISOString()]]
-      }
-    });
-
-    console.log(`Marked email as sent for invoice ${invoiceId}`);
-  } catch (err) {
-    console.error("Error marking email as sent:", err.message);
-    // Don't throw - this shouldn't block the payment flow
-  }
-}
-
-/**
- * Get user info from PaymentAdditionalInfo sheet
- */
-async function getUserInfo(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return { name: '', email: '' };
-
-  try {
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PaymentAdditionalInfo!A2:H"
-    });
-
-    const rows = response.data.values || [];
-
-    // Search for the invoice ID (column A = index 0)
-    for (const row of rows) {
-      if (row[0] === invoiceId) {
-        return {
-          name: row[2] || '',  // Column C = index 2
-          email: row[3] || ''  // Column D = index 3
-        };
-      }
-    }
-
-    return { name: '', email: '' };  // Not found
-  } catch (err) {
-    console.warn("Error getting user info:", err.message);
-    return { name: '', email: '' };  // Fail open
-  }
-}
 
 /**
  * Check payment status with 3Thix API - PRODUCTION CRITICAL
@@ -194,33 +120,19 @@ async function checkPaymentStatusWith3Thix(invoiceId) {
 }
 
 /**
- * Map 3Thix status to our internal status
+ * Normalize 3Thix status as per rules
  */
 function map3ThixStatus(thixStatus) {
   if (!thixStatus) return 'PENDING';
 
-  const statusMap = {
-    'COMPLETED': 'SUCCESS',
-    'SUCCESS': 'SUCCESS',
-    'PAID': 'SUCCESS',
-    'APPROVED': 'SUCCESS',
-    'CAPTURED': 'SUCCESS',
-    'SETTLED': 'SUCCESS',
-    'FAILED': 'FAILED',
-    'DECLINED': 'FAILED',
-    'ERROR': 'FAILED',
-    'REJECTED': 'FAILED',
-    'CANCELLED': 'CANCELLED',
-    'CANCELED': 'CANCELLED',
-    'ABANDONED': 'TIMEOUT',
-    'EXPIRED': 'TIMEOUT',
-    'TIMEOUT': 'TIMEOUT',
-    'PENDING': 'PENDING',
-    'PROCESSING': 'PENDING',
-    'CREATED': 'PENDING'
-  };
-
-  return statusMap[thixStatus.toUpperCase()] || thixStatus;
+  const upperStatus = thixStatus.toUpperCase();
+  if (['PAID', 'COMPLETED', 'SUCCESS'].includes(upperStatus)) {
+    return 'SUCCESS';
+  }
+  if (['FAILED', 'CANCELLED'].includes(upperStatus)) {
+    return 'FAILED';
+  }
+  return 'PENDING';
 }
 
 /**
@@ -331,89 +243,69 @@ export default async function handler(req, res) {
 
   const { invoiceId } = req.query;
 
+  // Validate invoiceId
   if (!invoiceId) {
     return res.status(400).json({
       error: "Missing required parameter: invoiceId"
     });
   }
 
-  console.log(`🔍 Checking payment status for invoice: ${invoiceId}`);
-
   try {
-    // ALWAYS call 3Thix API first - this is the single source of truth
-    console.log(`📡 Calling 3Thix API directly for ${invoiceId}`);
-    const thixResult = await checkPaymentStatusWith3Thix(invoiceId);
+    // Lookup invoiceId in PAYMENT_TRANSACTIONS column A
+    const sheetData = await findPaymentStatus(invoiceId);
 
+    // If not found, return 404
+    if (!sheetData.found) {
+      console.log(`❌ Invoice ${invoiceId} not found in PAYMENT_TRANSACTIONS`);
+      return res.status(404).json({
+        invoiceId,
+        status: "NOT_FOUND"
+      });
+    }
+
+    // Always call 3Thix API
+    const thixResult = await checkPaymentStatusWith3Thix(invoiceId);
     if (!thixResult) {
       console.error(`❌ Could not get status from 3Thix for ${invoiceId}`);
       return res.status(200).json({
-        status: 'PENDING',
-        emailSent: false,
         invoiceId,
-        message: "Could not verify payment status with 3Thix"
+        status: "PENDING"
       });
     }
 
-    const realStatus = thixResult.status;
-    console.log(`📊 3Thix reports status: ${realStatus} for invoice ${invoiceId}`);
+    const status = thixResult.status;
+    console.log(`📊 3Thix status for ${invoiceId}: ${status}`);
 
-    // Get current Google Sheet data
-    const sheetData = await findPaymentStatus(invoiceId);
-    let emailSent = false;
-
-    // If 3Thix says PAID/SUCCESS, update Google Sheet and send emails
-    if (realStatus === 'SUCCESS') {
-      console.log(`💰 Payment confirmed SUCCESS by 3Thix for ${invoiceId}`);
-
-      // Update Google Sheet status to SUCCESS (if not already)
+    // If status === SUCCESS
+    if (status === 'SUCCESS') {
+      // Update STATUS in Google Sheet
       if (sheetData.status !== 'SUCCESS') {
-        console.log(`📝 Updating Google Sheet status to SUCCESS for ${invoiceId}`);
-        const updateSuccess = await updatePaymentStatus(invoiceId, 'SUCCESS');
-        if (updateSuccess) {
-          console.log(`✅ Google Sheet updated to SUCCESS for ${invoiceId}`);
-        } else {
-          console.error(`❌ Failed to update Google Sheet for ${invoiceId}`);
-        }
+        await updatePaymentStatus(invoiceId, 'SUCCESS');
       }
 
-      // Send emails if not already sent (idempotent)
-      if (sheetData.found && sheetData.emailSent !== 'YES') {
-        console.log(`📧 Processing emails for ${invoiceId}`);
-        const emailResult = await processSuccessfulPayment(
+      // If EMAIL_SENT !== 'YES', send customer + admin email, update EMAIL_SENT = YES, EMAIL_SENT_AT
+      if (sheetData.emailSent !== 'YES') {
+        await processSuccessfulPayment(
           invoiceId,
           sheetData.email,
           sheetData.name,
-          sheetData.amount,
-          sheetData.currency
+          '', // amount not in sheet
+          ''  // currency not in sheet
         );
-        emailSent = emailResult.emailSent;
-      } else if (sheetData.emailSent === 'YES') {
-        console.log(`📧 Emails already sent for ${invoiceId}`);
-        emailSent = true;
       }
-
-      return res.status(200).json({
-        status: 'SUCCESS',
-        emailSent: emailSent,
-        invoiceId
-      });
-
-    } else {
-      // Payment not successful according to 3Thix
-      console.log(`⏳ Payment status from 3Thix: ${realStatus} for ${invoiceId}`);
-      return res.status(200).json({
-        status: realStatus,
-        emailSent: false,
-        invoiceId
-      });
     }
+
+    // Return JSON only
+    return res.status(200).json({
+      invoiceId,
+      status
+    });
 
   } catch (err) {
     console.error("💥 Check payment status error:", err);
-    return res.status(500).json({
-      error: "EMAIL_FAILED",
-      message: err.message,
-      invoiceId
+    // On ANY error, log it and return PENDING
+    return res.status(200).json({
+      status: "PENDING"
     });
   }
 }

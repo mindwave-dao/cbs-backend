@@ -319,8 +319,8 @@ export default async function handler(req, res) {
    */
   const paymentBlocked = country === "US";
 
-  // Accept name, and email from request body
-  const { amount, currency, quantity = 1, name, email } = req.body;
+  // Accept name, email, and return_url from request body
+  const { amount, currency, quantity = 1, name, email, return_url } = req.body;
   const description = "NILA TOKEN - Mindwave";
 
   if (!amount || typeof amount !== "number" || amount <= 0) {
@@ -331,11 +331,19 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
-  // Construct URLs automatically
+  // Validate return_url
+  if (!return_url) {
+    return res.status(400).json({ error: "Missing required field: return_url" });
+  }
+
+  if (!return_url.startsWith('https://')) {
+    return res.status(400).json({ error: "return_url must start with https://" });
+  }
+
+  // Construct callback_url (webhook)
   const baseUrl = VERCEL_URL
     ? `https://${VERCEL_URL}`
     : 'http://localhost:3000';
-  const return_url = `${baseUrl}/payment-success.html`;
   const callback_url = `${baseUrl}/api/webhooks/3thix`;
 
   const merchant_ref_id = `mw-${Date.now()}`;
@@ -347,23 +355,6 @@ export default async function handler(req, res) {
     paymentBlocked
   };
 
-  const payload = {
-    rail: "CREDIT_CARD",
-    currency,
-    amount: amount.toString(),
-    merchant_ref_id,
-    callback_url,
-    return_url: encodeURIComponent(return_url), // IMPORTANT: encode, but do NOT alter
-    metadata: JSON.stringify(userMetadata),
-    cart: [
-      {
-        product_name: description,
-        qty_unit: quantity,
-        price_unit: (amount / quantity).toString()
-      }
-    ]
-  };
-
   let invoiceId = null;
 
   try {
@@ -373,7 +364,22 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
         "x-api-key": THIX_API_KEY
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        rail: "CREDIT_CARD",
+        currency,
+        amount: amount.toString(),
+        merchant_ref_id,
+        callback_url,
+        return_url: encodeURIComponent(return_url),
+        metadata: JSON.stringify(userMetadata),
+        cart: [
+          {
+            product_name: description,
+            qty_unit: quantity,
+            price_unit: (amount / quantity).toString()
+          }
+        ]
+      })
     });
 
     // Reject the request if response is not JSON
@@ -402,6 +408,10 @@ export default async function handler(req, res) {
     console.error("3Thix error:", err);
     return res.status(500).json({ error: "PAYMENT_SERVICE_ERROR", message: "Failed to create invoice" });
   }
+
+  // Build full return_url with invoiceId appended
+  const separator = return_url.includes('?') ? '&' : '?';
+  const fullReturnUrl = `${return_url}${separator}invoiceId=${invoiceId}`;
 
   // Log INVOICE_CREATED event to TransactionActivityLog
   // This guarantees every attempt is recorded, even if payment never happens
@@ -449,12 +459,11 @@ export default async function handler(req, res) {
   }
 
   // Generate Redirect URL Correctly
-  const redirectUrl = `${process.env.PAYMENT_PAGE_BASE}/?invoiceId=${invoiceId}&callbackUrl=${encodeURIComponent(return_url)}`;
+  const redirectUrl = `${process.env.PAYMENT_PAGE_BASE}/?invoiceId=${invoiceId}&callbackUrl=${encodeURIComponent(fullReturnUrl)}`;
 
   // ✅ Respond with invoice details and redirect URL
   res.status(200).json({
     invoiceId,
-    merchant_ref_id,
     redirectUrl
   });
 }
