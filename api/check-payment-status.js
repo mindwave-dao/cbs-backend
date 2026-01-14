@@ -150,70 +150,7 @@ async function findInPaymentTransactions(sheets, invoiceId) {
 }
 
 
-/**
- * Try to find Email and Name from other sheets if missing
- * Priority: transactionActivityLog -> PaymentAdditionalInfo
- */
-async function hydrateUserData(sheets, invoiceId, currentData) {
-  let email = currentData.EMAIL;
-  let name = currentData.NAME;
-  let hydrated = false;
 
-  // If we already have both, no need to look
-  if (email && name) return { email, name, hydrated: false };
-
-  console.log(`[HYDRATION CHECK] invoiceId=${invoiceId} - Missing email/name, searching other sheets...`);
-
-  // 1. TransactionActivityLog (Metadata)
-  if (!email || !name) {
-    try {
-      const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: "TransactionActivityLog!A2:L"
-      });
-      const rows = response.data.values || [];
-      // Traverse backwards to get latest
-      for (let i = rows.length - 1; i >= 0; i--) {
-        if (rows[i][1] === invoiceId) { // Invoice ID column B
-          // Metadata is in column K (index 10)
-          try {
-            const metadata = JSON.parse(rows[i][10] || '{}');
-            if (!email && metadata.email) email = metadata.email;
-            if (!name && metadata.name) name = metadata.name;
-          } catch (e) { /* ignore json error */ }
-
-          if (email && name) break;
-        }
-      }
-    } catch (e) { console.warn("[Hydration] ActivityLog failed", e.message); }
-  }
-
-  // 2. PaymentAdditionalInfo
-  if (!email || !name) {
-    try {
-      const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PaymentAdditionalInfo!A2:H"
-      });
-      const rows = response.data.values || [];
-      for (const row of rows) {
-        if (row[0] === invoiceId) { // Invoice ID Column A
-          if (!name && row[2]) name = row[2]; // Name Column C
-          if (!email && row[3]) email = row[3]; // Email Column D
-        }
-        if (email && name) break;
-      }
-    } catch (e) { console.warn("[Hydration] AdditionalInfo failed", e.message); }
-  }
-
-  // Check if we found anything new
-  if (email !== currentData.EMAIL || name !== currentData.NAME) {
-    console.log(`[EMAIL HYDRATED] invoiceId=${invoiceId} email=${email} name=${name}`);
-    return { email, name, hydrated: true };
-  }
-
-  return { email, name, hydrated: false };
-}
 
 async function updatePaymentTransactionRow(sheets, rowIndex, status, email, name, emailSent, emailSentAt) {
   try {
@@ -258,23 +195,14 @@ async function handleForcedSuccess(sheets, invoiceId, rowData) {
   if (status.toUpperCase() === 'PENDING') {
     console.log(`[FORCED SUCCESS] invoiceId=${invoiceId}`);
     status = 'SUCCESS';
-    // We will perform the update shortly
   }
 
-  // 2. Hydrate
-  const hydration = await hydrateUserData(sheets, invoiceId, rowData);
-  if (hydration.hydrated) {
-    email = hydration.email;
-    name = hydration.name;
+  // 2. Update Sheet Status if changed
+  if (status !== rowData.STATUS) {
+    await updatePaymentTransactionRow(sheets, rowIndex, status, null, null, null, null);
   }
 
-  // 3. Update Sheet (Status + Hydrated Data)
-  // We update if status changed OR if we hydrated data
-  if (status !== rowData.STATUS || hydration.hydrated) {
-    await updatePaymentTransactionRow(sheets, rowIndex, status, email, name, null, null);
-  }
-
-  // 4. Send Email (Idempotent)
+  // 3. Send Email (Idempotent - Strict Rule)
   if (status === 'SUCCESS' && emailSent !== 'YES' && email) {
     console.log(`[EMAIL TRIGGER] invoiceId=${invoiceId} sending to ${email}`);
     await processSuccessfulPayment(invoiceId, email, name);
@@ -285,7 +213,7 @@ async function handleForcedSuccess(sheets, invoiceId, rowData) {
   } else if (emailSent === 'YES') {
     console.log(`[EMAIL SKIPPED - ALREADY SENT] invoiceId=${invoiceId}`);
   } else if (!email) {
-    console.warn(`[EMAIL SKIP] invoiceId=${invoiceId} - No email found even after hydration`);
+    console.warn(`[EMAIL SKIP] invoiceId=${invoiceId} - No email found (Hydration removed)`);
   }
 
   return 'SUCCESS';
@@ -427,8 +355,13 @@ export default async function handler(req, res) {
     // STEP 3: 3Thix API (LAST RESORT)
     const apiStatus = await check3ThixSafe(invoiceId);
     if (apiStatus === 'SUCCESS') {
-      if (newRow) {
-        await handleForcedSuccess(sheets, invoiceId, newRow);
+      console.log(`[STEP 3] 3Thix API confirmed SUCCESS, syncing...`);
+      await syncToPaymentTransactions(sheets, invoiceId, 'SUCCESS');
+
+      // Re-fetch to handle via standard flow
+      paymentTransaction = await findInPaymentTransactions(sheets, invoiceId);
+      if (paymentTransaction) {
+        await handleForcedSuccess(sheets, invoiceId, paymentTransaction);
       }
       return res.json({ invoiceId, status: "SUCCESS" });
     }

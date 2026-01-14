@@ -36,12 +36,12 @@ let sheets = null;
 
 function getGoogleSheets() {
   if (sheets) return sheets;
-  
+
   if (!GOOGLE_SHEETS_CREDENTIALS) {
     console.warn("GOOGLE_SHEETS_CREDENTIALS not set, skipping sheets integration");
     return null;
   }
-  
+
   try {
     const credentials = JSON.parse(GOOGLE_SHEETS_CREDENTIALS);
     const auth = new google.auth.GoogleAuth({
@@ -220,9 +220,9 @@ async function ensureActivityLogHeaders(sheetsClient) {
       spreadsheetId: GOOGLE_SHEET_ID,
       range: "TransactionActivityLog!A1:L1"
     });
-    
+
     const existingHeaders = response.data.values?.[0];
-    
+
     if (!existingHeaders || !existingHeaders[0]) {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
@@ -258,13 +258,13 @@ async function appendToActivityLog(row) {
     console.warn("Google Sheets not configured, skipping activity log");
     return;
   }
-  
+
   try {
     if (!activityHeadersInitialized) {
       await ensureActivityLogHeaders(sheetsClient);
       activityHeadersInitialized = true;
     }
-    
+
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
       range: "TransactionActivityLog!A:L",
@@ -314,7 +314,7 @@ export default async function handler(req, res) {
   const country = req.headers["x-vercel-ip-country"] || "";
   const userAgent = req.headers["user-agent"] || "";
   const ipAddress = req.headers["x-forwarded-for"]?.split(',')[0]?.trim() ||
-                    req.headers["x-real-ip"] || "";
+    req.headers["x-real-ip"] || "";
 
   /**
    * Block payment ONLY when country is "US"
