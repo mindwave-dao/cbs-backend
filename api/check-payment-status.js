@@ -359,21 +359,29 @@ async function check3ThixSafe(invoiceId) {
   try {
     console.log(`🔍 Checking payment status with 3Thix API for invoice: ${invoiceId}`);
 
-    // PRIMARY: POST /invoice/details/get (Authoritative)
+    // PRIMARY: POST /invoice/issuer/get (Authoritative)
     try {
-      const response = await fetch(`${THIX_API_URL}/invoice/details/get`, {
+      const response = await fetch(`${THIX_API_URL}/invoice/issuer/get`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-api-key": apiKey
         },
-        body: JSON.stringify({ invoice_id: invoiceId })
+        body: JSON.stringify({ id: invoiceId })
       });
 
       if (response.ok) {
         const data = await response.json();
-        // invoice validation might allow 'payment_status' or 'status'
-        const status = data.payment_status || data.status;
+        // Check deep path first (invoice.payment_status), then top level
+        let status = null;
+        if (data.invoice && data.invoice.payment_status) {
+          status = data.invoice.payment_status;
+        } else if (data.payment_status) {
+          status = data.payment_status;
+        } else if (data.status) {
+          status = data.status;
+        }
+
         if (status) {
           console.log(`[3Thix Primary] Status: ${status}`);
           return { status: status.toUpperCase(), data };
@@ -457,13 +465,18 @@ export default async function handler(req, res) {
     if (apiResult) {
       const rawStatus = (apiResult.status || '').toUpperCase();
 
-      // Strict Interpretation
+      // Strict Status Mapping
       if (['PAID', 'COMPLETED', 'SUCCESS'].includes(rawStatus)) {
         finalStatus = 'SUCCESS';
-      } else if (['FAILED', 'CANCELLED', 'EXPIRED'].includes(rawStatus)) {
+      } else if (['UNCLAIMED', 'SUBMITTED', 'PAYMENT_SUBMITTED', 'UNPAID'].includes(rawStatus)) {
+        finalStatus = 'PROCESSING';
+      } else if (['PARTIALLY_PAID', 'PARTIAL'].includes(rawStatus)) {
+        finalStatus = 'PARTIAL';
+      } else if (['ERROR', 'FAILED', 'CANCELLED', 'EXPIRED'].includes(rawStatus)) {
         finalStatus = 'FAILED';
       } else {
-        finalStatus = 'PENDING';
+        // Fallback for unknown states or if explicitly pending
+        finalStatus = 'PROCESSING';
       }
 
       transactionData = apiResult.data;
@@ -480,23 +493,29 @@ export default async function handler(req, res) {
       // Parse metadata
       let metadata = {};
       try {
-        metadata = typeof transactionData.metadata === 'string'
-          ? JSON.parse(transactionData.metadata)
-          : transactionData.metadata || {};
+        const metaSource = transactionData.metadata || (transactionData.invoice && transactionData.invoice.metadata) || (transactionData.order && transactionData.order.metadata);
+        metadata = typeof metaSource === 'string'
+          ? JSON.parse(metaSource)
+          : metaSource || {};
       } catch (e) { }
 
       // WRITE TO ALL LEDGERS (Idempotent)
 
       // A. Transactions Sheet (Financial Ledger)
+      const merchRef = transactionData.merchant_ref_id || (transactionData.invoice && transactionData.invoice.merchant_ref_id) || '';
+      const amount = transactionData.amount || (transactionData.invoice && transactionData.invoice.amount) || '';
+      const currency = transactionData.currency || (transactionData.invoice && transactionData.invoice.currency) || '';
+      const fee = transactionData.fee || (transactionData.invoice && transactionData.invoice.fee) || '0';
+
       await appendToTransactions(sheets, [
-        transactionData.merchant_ref_id || '',
+        merchRef,
         "NILA TOKEN - Mindwave",
-        transactionData.amount || '',
-        transactionData.currency || '',
+        amount,
+        currency,
         'SUCCESS',
         "3THIX",
         invoiceId,
-        transactionData.fee || '0',
+        fee,
         metadata.paymentBlocked ? 'BLOCKED' : '',
         '', // country
         '', // notes
@@ -507,10 +526,10 @@ export default async function handler(req, res) {
       await appendToActivityLog(sheets, [
         crypto.randomUUID(),
         invoiceId,
-        transactionData.merchant_ref_id || '',
+        merchRef,
         "PAYMENT_SUCCESS",
-        transactionData.amount || '',
-        transactionData.currency || '',
+        amount,
+        currency,
         "3THIX",
         '',
         '',
@@ -525,12 +544,12 @@ export default async function handler(req, res) {
       if (name || email) {
         await appendToAdditionalInfo(sheets, [
           invoiceId,
-          transactionData.merchant_ref_id || '',
+          merchRef,
           name,
           email,
           'SUCCESS',
-          transactionData.amount || '',
-          transactionData.currency || '',
+          amount,
+          currency,
           new Date().toISOString()
         ]);
       }
@@ -563,7 +582,11 @@ export default async function handler(req, res) {
           // Try from current transaction data
           if (transactionData) {
             let metadata = {};
-            try { metadata = typeof transactionData.metadata === 'string' ? JSON.parse(transactionData.metadata) : transactionData.metadata || {}; } catch (e) { }
+            try {
+              const metaSource = transactionData.metadata || (transactionData.invoice && transactionData.invoice.metadata) || (transactionData.order && transactionData.order.metadata);
+              metadata = typeof metaSource === 'string' ? JSON.parse(metaSource) : metaSource || {};
+            } catch (e) { }
+
             if (metadata.email) {
               hydrated = { email: metadata.email, name: metadata.name };
             }
