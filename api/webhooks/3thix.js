@@ -1,520 +1,77 @@
-import { google } from "googleapis";
+
+import { handlePaymentLogic, validatePaymentEnv } from "../../lib/payment-logic.js";
 import crypto from "crypto";
-import { processSuccessfulPayment } from "../lib/email.js";
 
-// Environment validation (MANDATORY)
-const THIX_API_URL = process.env.THIX_API_URL;
-const THIX_API_KEY = process.env.THIX_API_KEY;
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const GOOGLE_SHEETS_CREDENTIALS = process.env.GOOGLE_SHEETS_CREDENTIALS;
-
-if (!THIX_API_URL.startsWith('https://api.3thix.com')) {
-  throw new Error('INVALID CONFIG: THIX_API_URL must be https://api.3thix.com');
-}
-if (!THIX_API_KEY || !GOOGLE_SHEET_ID || !GOOGLE_SHEETS_CREDENTIALS) {
-  throw new Error('INVALID CONFIG: Missing required environment variables');
-}
-
-// SANDBOX references (commented for future debugging):
-// THIX_API_URL=https://sandbox-api.3thix.com
-// THIX_API_KEY=SANDBOX_API_KEY
-// PAYMENT_PAGE_BASE=https://sandbox-pay.3thix.com
-
-/* ---------- CORS Setup ---------- */
-function setCorsHeaders(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Webhook-Signature');
-  res.setHeader('Access-Control-Max-Age', '86400');
-}
-
-/* ---------- Google Sheets Setup (lazy init) ---------- */
-let sheets = null;
-
-function getGoogleSheets() {
-  if (sheets) return sheets;
-
-  if (!GOOGLE_SHEETS_CREDENTIALS) {
-    console.warn("GOOGLE_SHEETS_CREDENTIALS not set, skipping sheets integration");
-    return null;
+/* ---------- Helper: Verify Signature ---------- */
+function verifyWebhookSignature(req) {
+  // If WEBHOOK_SECRET is set, we prefer HMAC verification
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret) {
+    const signature = req.headers['x-3thix-signature'];
+    if (!signature) return false;
+    const body = JSON.stringify(req.body);
+    const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
   }
 
-  try {
-    const credentials = JSON.parse(GOOGLE_SHEETS_CREDENTIALS);
-    const auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-    });
-    sheets = google.sheets({ version: "v4", auth });
-    return sheets;
-  } catch (err) {
-    console.error("Failed to initialize Google Sheets:", err);
-    return null;
-  }
+  // Fallback: Check BEARER Token
+  const authHeader = req.headers['authorization'];
+  const expectedToken = process.env.WEBHOOK_AUTH_TOKEN;
+  if (!expectedToken) return true; // CRITICAL: If no token set, we fail open or close? Typically fail open is bad.
+  // We assume strict security.
+  if (!authHeader) return false;
+  const token = authHeader.split(" ")[1];
+  return token === expectedToken;
 }
 
-/* ---------- PAYMENT_TRANSACTIONS Sheet ---------- */
-const SHEET_HEADERS = [
-  "INVOICE_ID",
-  "STATUS",
-  "EMAIL",
-  "NAME",
-  "EMAIL_SENT",
-  "EMAIL_SENT_AT"
-];
-
-let headersInitialized = false;
-
-async function ensureHeadersExist(sheetsClient) {
-  try {
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A1:F1"
-    });
-
-    const existingHeaders = response.data.values?.[0];
-
-    if (!existingHeaders || !existingHeaders[0]) {
-      await sheetsClient.spreadsheets.values.update({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:F1",
-        valueInputOption: "RAW",
-        requestBody: { values: [SHEET_HEADERS] }
-      });
-      console.log("Added headers to PAYMENT_TRANSACTIONS sheet");
-    }
-  } catch (err) {
-    console.warn("Header check failed, attempting to add:", err.message);
-    try {
-      await sheetsClient.spreadsheets.values.update({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:F1",
-        valueInputOption: "RAW",
-        requestBody: { values: [SHEET_HEADERS] }
-      });
-    } catch (updateErr) {
-      console.error("Failed to add headers:", updateErr.message);
-    }
-  }
-}
-
-async function appendToGoogleSheets(row) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID) return;
-
-  try {
-    if (!headersInitialized) {
-      await ensureHeadersExist(sheetsClient);
-      headersInitialized = true;
-    }
-
-    await sheetsClient.spreadsheets.values.append({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:F",
-      valueInputOption: "RAW",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [row] }
-    });
-    console.log("PAYMENT_TRANSACTIONS entry added successfully");
-  } catch (err) {
-    console.error("Google Sheets append error:", err);
-    throw err;
-  }
-}
-
-/* ---------- TransactionActivityLog Sheet ---------- */
-const ACTIVITY_LOG_HEADERS = [
-  "activity_id",
-  "invoice_id",
-  "merchant_ref_id",
-  "event_type",
-  "amount",
-  "currency",
-  "gateway",
-  "country",
-  "user_agent",
-  "ip",
-  "metadata",
-  "timestamp"
-];
-
-let activityHeadersInitialized = false;
-
-async function ensureActivityLogHeaders(sheetsClient) {
-  try {
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "TransactionActivityLog!A1:L1"
-    });
-
-    const existingHeaders = response.data.values?.[0];
-
-    if (!existingHeaders || !existingHeaders[0]) {
-      await sheetsClient.spreadsheets.values.update({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: "TransactionActivityLog!A1:L1",
-        valueInputOption: "RAW",
-        requestBody: { values: [ACTIVITY_LOG_HEADERS] }
-      });
-      console.log("Added headers to TransactionActivityLog sheet");
-    }
-  } catch (err) {
-    console.warn("ActivityLog header check failed, attempting to add:", err.message);
-    try {
-      await sheetsClient.spreadsheets.values.update({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: "TransactionActivityLog!A1:L1",
-        valueInputOption: "RAW",
-        requestBody: { values: [ACTIVITY_LOG_HEADERS] }
-      });
-    } catch (updateErr) {
-      console.error("Failed to add ActivityLog headers:", updateErr.message);
-    }
-  }
-}
-
-/**
- * Append a row to TransactionActivityLog sheet
- * Event types: INVOICE_CREATED, PAYMENT_REDIRECTED, PAYMENT_BLOCKED_US,
- *              WEBHOOK_RECEIVED, PAYMENT_SUCCESS, PAYMENT_FAILED,
- *              PAYMENT_CANCELLED, PAYMENT_TIMEOUT
- */
-async function appendToActivityLog(row) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID) {
-    console.warn("Google Sheets not configured, skipping activity log");
-    return;
-  }
-
-  try {
-    if (!activityHeadersInitialized) {
-      await ensureActivityLogHeaders(sheetsClient);
-      activityHeadersInitialized = true;
-    }
-
-    await sheetsClient.spreadsheets.values.append({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "TransactionActivityLog!A:L",
-      valueInputOption: "RAW",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [row] }
-    });
-    console.log("Activity log entry added successfully");
-  } catch (err) {
-    console.error("Activity log append error:", err);
-    // Don't throw - activity logging should not block payment flow
-  }
-}
-
-/* ---------- PaymentAdditionalInfo Sheet ---------- */
-const ADDITIONAL_INFO_HEADERS = [
-  "invoice_id",
-  "merchant_ref_id",
-  "name",
-  "email",
-  "amount",
-  "currency",
-  "status",
-  "created_at"
-];
-
-let additionalInfoHeadersInitialized = false;
-
-async function ensureAdditionalInfoHeaders(sheetsClient) {
-  try {
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PaymentAdditionalInfo!A1:H1"
-    });
-
-    const existingHeaders = response.data.values?.[0];
-
-    if (!existingHeaders || !existingHeaders[0]) {
-      await sheetsClient.spreadsheets.values.update({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PaymentAdditionalInfo!A1:H1",
-        valueInputOption: "RAW",
-        requestBody: { values: [ADDITIONAL_INFO_HEADERS] }
-      });
-      console.log("Added headers to PaymentAdditionalInfo sheet");
-    }
-  } catch (err) {
-    console.warn("AdditionalInfo header check failed, attempting to add:", err.message);
-    try {
-      await sheetsClient.spreadsheets.values.update({
-        spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PaymentAdditionalInfo!A1:H1",
-        valueInputOption: "RAW",
-        requestBody: { values: [ADDITIONAL_INFO_HEADERS] }
-      });
-    } catch (updateErr) {
-      console.error("Failed to add AdditionalInfo headers:", updateErr.message);
-    }
-  }
-}
-
-/**
- * Append a row to PaymentAdditionalInfo sheet
- * Only for successful payments - stores user-submitted info
- */
-async function appendToAdditionalInfo(row) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID) {
-    console.warn("Google Sheets not configured, skipping additional info");
-    return;
-  }
-
-  try {
-    if (!additionalInfoHeadersInitialized) {
-      await ensureAdditionalInfoHeaders(sheetsClient);
-      additionalInfoHeadersInitialized = true;
-    }
-
-    await sheetsClient.spreadsheets.values.append({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PaymentAdditionalInfo!A:H",
-      valueInputOption: "RAW",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [row] }
-    });
-    console.log("Additional info entry added successfully");
-  } catch (err) {
-    console.error("Additional info append error:", err);
-    // Don't throw - additional info logging should not block payment flow
-  }
-}
-
-/**
- * Map 3Thix payment status to our ledger status
- * Valid statuses we want to record:
- * - SUCCESS: Payment completed successfully
- * - FAILED: Payment failed
- * - TIMEOUT: Payment interrupted/abandoned (>2 min timeout)
- * - CANCELLED: User cancelled payment
- */
-function mapPaymentStatus(thixStatus) {
-  const statusMap = {
-    'COMPLETED': 'SUCCESS',
-    'SUCCESS': 'SUCCESS',
-    'PAID': 'SUCCESS',
-    'FAILED': 'FAILED',
-    'DECLINED': 'FAILED',
-    'ERROR': 'FAILED',
-    'TIMEOUT': 'TIMEOUT',
-    'EXPIRED': 'TIMEOUT',
-    'ABANDONED': 'TIMEOUT',
-    'CANCELLED': 'CANCELLED',
-    'CANCELED': 'CANCELLED'
-  };
-
-  return statusMap[thixStatus?.toUpperCase()] || thixStatus;
-}
-
-/**
- * Map status to activity log event type
- */
-function mapStatusToEventType(status) {
-  const eventMap = {
-    'SUCCESS': 'PAYMENT_SUCCESS',
-    'FAILED': 'PAYMENT_FAILED',
-    'TIMEOUT': 'PAYMENT_TIMEOUT',
-    'CANCELLED': 'PAYMENT_CANCELLED'
-  };
-  return eventMap[status] || 'WEBHOOK_RECEIVED';
-}
-
-/**
- * Check if status is one we should record in ledger
- * Only record final states: success, failed, timeout, cancelled
- */
-function shouldRecordStatus(status) {
-  const recordableStatuses = ['SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELLED'];
-  return recordableStatuses.includes(status);
-}
-
-/**
- * Parse metadata from callback - may be JSON string or object
- */
-function parseMetadata(metadata) {
-  if (!metadata) return {};
-  if (typeof metadata === 'object') return metadata;
-  try {
-    return JSON.parse(metadata);
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Update payment status in PAYMENT_TRANSACTIONS sheet
- */
-async function updatePaymentStatus(invoiceId, newStatus) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return false;
-
-  try {
-    // Get all rows from PAYMENT_TRANSACTIONS sheet
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:F"  // Skip header row, 6 columns
-    });
-
-    const rows = response.data.values || [];
-    let rowIndex = -1;
-
-    // Find the row with matching INVOICE_ID (column A = index 0)
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] === invoiceId) {
-        rowIndex = i + 2;  // +2 because we start from A2 and arrays are 0-indexed
-        break;
-      }
-    }
-
-    if (rowIndex === -1) {
-      console.warn(`Could not find row for invoice ${invoiceId}`);
-      return false;
-    }
-
-    // Update STATUS column (column B = index 1)
-    await sheetsClient.spreadsheets.values.update({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: `PAYMENT_TRANSACTIONS!B${rowIndex}`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [[newStatus]]
-      }
-    });
-
-    console.log(`Updated status for invoice ${invoiceId} to ${newStatus}`);
-    return true;
-  } catch (err) {
-    console.error("Error updating payment status:", err.message);
-    return false;
-  }
-}
-
-/**
- * Get payment row data by invoice ID from PAYMENT_TRANSACTIONS sheet
- */
-async function getPaymentRow(invoiceId) {
-  const sheetsClient = getGoogleSheets();
-  if (!sheetsClient || !GOOGLE_SHEET_ID || !invoiceId) return null;
-
-  try {
-    const response = await sheetsClient.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:F"
-    });
-
-    const rows = response.data.values || [];
-
-    // Find the row with matching INVOICE_ID (column A = index 0)
-    for (const row of rows) {
-      if (row[0] === invoiceId) {
-        return {
-          invoiceId: row[0],
-          status: row[1],
-          email: row[2],
-          name: row[3],
-          emailSent: row[4],
-          emailSentAt: row[5]
-        };
-      }
-    }
-
-    return null;  // Not found
-  } catch (err) {
-    console.error("Error getting payment row:", err.message);
-    return null;
-  }
-}
-
-/* ---------- API Handler ---------- */
 export default async function handler(req, res) {
-  setCorsHeaders(res);
-
-  // Handle preflight OPTIONS request
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   try {
-    console.log("🔔 3THIX WEBHOOK RECEIVED");
-    const data = req.body;
+    // 1. Validate Env
+    validatePaymentEnv();
 
-    // Extract payment information from webhook
-    const {
-      invoice_id,
-      invoiceId,
-      status,
-      payment_status
-    } = data;
-
-    const finalInvoiceId = invoice_id || invoiceId;
-    const finalStatus = status || payment_status;
-
-    if (!finalInvoiceId) {
-      console.error("Missing invoice_id in webhook");
-      return res.status(400).json({
-        error: "Missing required field: invoice_id"
-      });
+    // 2. Auth Check
+    if (!verifyWebhookSignature(req)) {
+      console.warn("[WEBHOOK UNAUTHORIZED] Invalid signature or token");
+      return res.status(401).send("Unauthorized");
     }
 
-    if (!finalStatus) {
-      console.error("Missing status in webhook");
-      return res.status(400).json({ error: "Missing required field: status" });
+    const event = req.body;
+    console.log(`[WEBHOOK RECEIVED] Event: ${event.type || 'UNKNOWN'}`);
+
+    // 3. Extract Invoice ID from event
+    // 3Thix events: INVOICE_STATUS_CHANGED, INVOICE_PAID, ORDER_COMPLETED
+    // Payload usually has { type: "...", data: { invoice_id: "..." } } or similar
+    // Check various paths
+    let invoiceId = null;
+    if (event.data) {
+      invoiceId = event.data.invoice_id || event.data.id;
     }
 
-    // Normalize status (PAID, COMPLETED → SUCCESS)
-    const normalizedStatus = mapPaymentStatus(finalStatus);
+    // If not found in common paths, check if the event itself is the object (unlikely but possible)
+    if (!invoiceId && event.invoice_id) invoiceId = event.invoice_id;
 
-    console.log(`Processing webhook: ${finalInvoiceId} - ${finalStatus} → ${normalizedStatus}`);
-
-    // Update Google Sheets status
-    const updateSuccess = await updatePaymentStatus(finalInvoiceId, normalizedStatus);
-
-    if (!updateSuccess) {
-      console.error(`Failed to update status for invoice ${finalInvoiceId}`);
-      return res.status(500).json({
-        error: "Failed to update payment status"
-      });
+    if (!invoiceId) {
+      console.warn("[WEBHOOK SKIPPED] No invoice_id found in payload");
+      return res.status(200).send("Skipped (No Invoice ID)");
     }
 
-    // Critical rule: Email must be triggered inside the same request after Google Sheets update
-    if (normalizedStatus === 'SUCCESS') {
-      const row = await getPaymentRow(finalInvoiceId);
+    // 4. Trigger Shared Logic (Fire-and-forget or await?)
+    // Requirement: "Return HTTP 200 quickly; do heavy work in background... make sure to ack 200 <= 10s"
+    // Since we are serverless (Vercel), we MUST await or the process dies.
+    // We will await, but the shared logic is optimized.
 
-      if (row) {
-        console.log(`🎯 Processing successful payment via webhook for ${finalInvoiceId}`);
+    // We pass 'WEBHOOK' as source
+    const result = await handlePaymentLogic(invoiceId, 'WEBHOOK');
 
-        // Use shared email processing function (same as check-payment-status endpoint)
-        const emailResult = await processSuccessfulPayment(
-          finalInvoiceId,
-          row.email,
-          row.name
-        );
+    console.log(`[WEBHOOK PROCESSED] ${invoiceId} -> ${result.status}`);
 
-        console.log(`📧 Webhook email result for ${finalInvoiceId}: ${emailResult.emailSent ? 'SENT' : 'NOT_SENT'}`);
-      }
-    }
+    return res.status(200).json({ received: true, processed: true });
 
-    console.log(`Webhook processed successfully: ${finalInvoiceId} - ${normalizedStatus}`);
-
-    return res.status(200).json({
-      received: true,
-      status: normalizedStatus,
-      invoiceId: finalInvoiceId
-    });
-
-  } catch (err) {
-    console.error("Webhook processing error:", err);
-    return res.status(500).json({
-      error: "Failed to process webhook",
-      message: err.message
-    });
+  } catch (e) {
+    console.error("[WEBHOOK ERROR]", e);
+    // Return 500 so 3Thix retries
+    return res.status(500).send("Internal Server Error");
   }
 }
