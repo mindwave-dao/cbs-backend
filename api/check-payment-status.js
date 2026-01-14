@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import { processSuccessfulPayment } from "../lib/email.js";
+import crypto from "crypto";
 
 // Environment validation (MANDATORY)
 const THIX_API_URL = process.env.THIX_API_URL;
@@ -43,23 +44,83 @@ async function getSheetsClient() {
 }
 
 /**
+ * Writers for Ledger Sheets
+ */
+async function appendToTransactions(sheets, row) {
+  if (!sheets) return;
+  try {
+    // Check if invoice already exists to avoid duplicates
+    const invoiceId = row[6]; // Index 6 is Invoice ID in Transactions sheet
+
+    // Note: For efficiency in high volume this should be optimized, 
+    // but for now we rely on the caller to check existence via findInTransactions logic before calling this if possible,
+    // or we just append. The requirement is to Ensure it is written.
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "Transactions!A2:L",
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] }
+    });
+    console.log(`[LEDGER WRITE] Transactions sheet updated for invoice ${invoiceId}`);
+  } catch (e) {
+    console.error("[LEDGER WRITE FAILED] Transactions", e.message);
+  }
+}
+
+async function appendToActivityLog(sheets, row) {
+  if (!sheets) return;
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "TransactionActivityLog!A2:L",
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] }
+    });
+    console.log(`[LEDGER WRITE] ActivityLog updated`);
+  } catch (e) {
+    console.error("[LEDGER WRITE FAILED] ActivityLog", e.message);
+  }
+}
+
+async function appendToAdditionalInfo(sheets, row) {
+  if (!sheets) return;
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: "PaymentAdditionalInfo!A2:H",
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] }
+    });
+    console.log(`[LEDGER WRITE] AdditionalInfo updated`);
+  } catch (e) {
+    console.error("[LEDGER WRITE FAILED] AdditionalInfo", e.message);
+  }
+}
+
+/**
  * Search logic for 'Transactions' Sheet
  * Invoice ID is in Column G (index 6)
- * Status is in Column E (index 4)
- * Returns 'SUCCESS' if found and status matches
+ * Returns row data if found
  */
 async function findInTransactions(sheets, invoiceId) {
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "Transactions!A2:L" // Reading widely to catch columns
+      range: "Transactions!A2:L"
     });
     const rows = response.data.values || [];
     for (const row of rows) {
-      if (row[6] === invoiceId) { // Column G
-        const status = (row[4] || '').toUpperCase(); // Column E
-        if (['SUCCESS', 'PAID', 'COMPLETED'].includes(status)) return 'SUCCESS';
-        if (['FAILED', 'CANCELLED'].includes(status)) return 'FAILED';
+      if (row[6] === invoiceId) {
+        return {
+          status: (row[4] || '').toUpperCase(),
+          amount: row[2],
+          currency: row[3],
+          merchantRefId: row[0]
+        };
       }
     }
   } catch (e) {
@@ -69,60 +130,9 @@ async function findInTransactions(sheets, invoiceId) {
 }
 
 /**
- * Search logic for 'TransactionActivityLog' Sheet
- * Invoice ID is in Column B (index 1)
- * Event Type is in Column D (index 3)
- * Returns 'SUCCESS' if PAYMENT_SUCCESS event exists
- */
-async function findInActivityLog(sheets, invoiceId) {
-  try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "TransactionActivityLog!A2:D"
-    });
-    const rows = response.data.values || [];
-    for (const row of rows) {
-      if (row[1] === invoiceId) { // Column B
-        const event = (row[3] || '').toUpperCase(); // Column D
-        if (event === 'PAYMENT_SUCCESS') return 'SUCCESS';
-      }
-    }
-  } catch (e) {
-    console.warn("[ActivityLog Sheet Check Failed]", e.message);
-  }
-  return null;
-}
-
-/**
- * Search logic for 'PaymentAdditionalInfo' Sheet
- * Invoice ID is in Column A (index 0)
- * Status is in Column G (index 6)
- * Returns 'SUCCESS' if found (existence usually implies success here, but checking status)
- */
-async function findInAdditionalInfo(sheets, invoiceId) {
-  try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PaymentAdditionalInfo!A2:H"
-    });
-    const rows = response.data.values || [];
-    for (const row of rows) {
-      if (row[0] === invoiceId) { // Column A
-        const status = (row[6] || '').toUpperCase(); // Column G
-        if (['SUCCESS', 'PAID'].includes(status)) return 'SUCCESS';
-      }
-    }
-  } catch (e) {
-    console.warn("[AdditionalInfo Sheet Check Failed]", e.message);
-  }
-  return null;
-}
-
-/**
  * Search logic for 'PAYMENT_TRANSACTIONS' Sheet (The Sync Target)
  * Invoice ID is in Column A (index 0)
  * Status is in Column B (index 1)
- * Returns object with full row data if found
  */
 async function findInPaymentTransactions(sheets, invoiceId) {
   try {
@@ -134,7 +144,7 @@ async function findInPaymentTransactions(sheets, invoiceId) {
     for (let i = 0; i < rows.length; i++) {
       if (rows[i][0] === invoiceId) {
         return {
-          rowIndex: i + 2, // 1-based index + header
+          rowIndex: i + 2,
           STATUS: rows[i][1] || 'PENDING',
           EMAIL: rows[i][2] || '',
           NAME: rows[i][3] || '',
@@ -150,30 +160,19 @@ async function findInPaymentTransactions(sheets, invoiceId) {
 }
 
 
-
-
 async function updatePaymentTransactionRow(sheets, rowIndex, status, email, name, emailSent, emailSentAt) {
   try {
     const updates = [];
-
-    // Column B (Status)
     if (status) updates.push({ range: `PAYMENT_TRANSACTIONS!B${rowIndex}`, values: [[status]] });
-    // Column C (Email)
     if (email) updates.push({ range: `PAYMENT_TRANSACTIONS!C${rowIndex}`, values: [[email]] });
-    // Column D (Name)
     if (name) updates.push({ range: `PAYMENT_TRANSACTIONS!D${rowIndex}`, values: [[name]] });
-    // Column E (Email Sent)
     if (emailSent) updates.push({ range: `PAYMENT_TRANSACTIONS!E${rowIndex}`, values: [[emailSent]] });
-    // Column F (Email Sent At)
     if (emailSentAt) updates.push({ range: `PAYMENT_TRANSACTIONS!F${rowIndex}`, values: [[emailSentAt]] });
 
     if (updates.length > 0) {
       await sheets.spreadsheets.values.batchUpdate({
         spreadsheetId: GOOGLE_SHEET_ID,
-        requestBody: {
-          valueInputOption: "RAW",
-          data: updates
-        }
+        requestBody: { valueInputOption: "RAW", data: updates }
       });
       console.log(`[GSHEET UPDATED] Row ${rowIndex} updated.`);
     }
@@ -182,85 +181,12 @@ async function updatePaymentTransactionRow(sheets, rowIndex, status, email, name
   }
 }
 
-async function handleForcedSuccess(sheets, invoiceId, rowData) {
-  console.log(`[GSHEET FOUND] invoiceId=${invoiceId}`);
-
-  let status = rowData.STATUS;
-  let email = rowData.EMAIL;
-  let name = rowData.NAME;
-  let rowIndex = rowData.rowIndex;
-  let emailSent = rowData.EMAIL_SENT;
-
-  // 1. Force Success
-  if (status.toUpperCase() === 'PENDING') {
-    console.log(`[FORCED SUCCESS] invoiceId=${invoiceId}`);
-    status = 'SUCCESS';
-  }
-
-  // 2. Update Sheet Status if changed
-  if (status !== rowData.STATUS) {
-    await updatePaymentTransactionRow(sheets, rowIndex, status, null, null, null, null);
-  }
-
-  // 3. Send Email (Idempotent - Strict Rule)
-  if (status === 'SUCCESS' && emailSent !== 'YES' && email) {
-    console.log(`[EMAIL TRIGGER] invoiceId=${invoiceId} sending to ${email}`);
-    await processSuccessfulPayment(invoiceId, email, name);
-
-    // Update Email Sent Flag
-    await updatePaymentTransactionRow(sheets, rowIndex, null, null, null, 'YES', new Date().toISOString());
-    console.log(`[EMAIL SENT] invoiceId=${invoiceId}`);
-  } else if (emailSent === 'YES') {
-    console.log(`[EMAIL SKIPPED - ALREADY SENT] invoiceId=${invoiceId}`);
-  } else if (!email) {
-    console.warn(`[EMAIL SKIP] invoiceId=${invoiceId} - No email found (Hydration removed)`);
-  }
-
-  return 'SUCCESS';
-}
-
-/**
- * Search logic for other sheets (Secondary)
- * Checks Transactions, PaymentAdditionalInfo, TransactionActivityLog
- * Returns 'SUCCESS' if found in any of them
- */
-async function findInOtherSheets(sheets, invoiceId) {
-  console.log(`[SECONDARY SHEET CHECK] invoiceId=${invoiceId}`);
-
-  // 1. Check Transactions (Ledger)
-  const transactionsStatus = await findInTransactions(sheets, invoiceId);
-  if (transactionsStatus === 'SUCCESS') {
-    console.log(`[STATUS RESOLVED FROM GSHEET] SUCCESS (Transactions Sheet)`);
-    return 'SUCCESS';
-  }
-
-  // 2. Check PaymentAdditionalInfo
-  const infoStatus = await findInAdditionalInfo(sheets, invoiceId);
-  if (infoStatus === 'SUCCESS') {
-    console.log(`[STATUS RESOLVED FROM GSHEET] SUCCESS (PaymentAdditionalInfo Sheet)`);
-    return 'SUCCESS';
-  }
-
-  // 3. Check TransactionActivityLog
-  const activityStatus = await findInActivityLog(sheets, invoiceId);
-  if (activityStatus === 'SUCCESS') {
-    console.log(`[STATUS RESOLVED FROM GSHEET] SUCCESS (TransactionActivityLog Sheet)`);
-    return 'SUCCESS';
-  }
-
-  return null;
-}
-
 async function check3ThixSafe(invoiceId) {
   const apiKey = process.env.THIX_API_KEY;
-  if (!apiKey || !THIX_API_URL || !invoiceId) {
-    console.error("❌ 3Thix API not configured or missing invoiceId");
-    return 'PENDING';
-  }
+  if (!apiKey || !THIX_API_URL || !invoiceId) return null;
 
   try {
     console.log(`🔍 Checking payment status with 3Thix API for invoice: ${invoiceId}`);
-
     const endpoints = [
       `${THIX_API_URL}/order/payment/${invoiceId}`,
       `${THIX_API_URL}/order/${invoiceId}`,
@@ -273,52 +199,50 @@ async function check3ThixSafe(invoiceId) {
           method: "GET",
           headers: { "Content-Type": "application/json", "x-api-key": apiKey }
         });
-
         if (response.ok) {
           const data = await response.json();
           const status = data.status || data.payment_status || data.state || data.paymentState;
-          if (status) {
-            const upperStatus = status.toUpperCase();
-            if (['PAID', 'COMPLETED', 'SUCCESS'].includes(upperStatus)) return 'SUCCESS';
-            if (['FAILED', 'CANCELLED'].includes(upperStatus)) return 'FAILED';
-          }
+          if (status) return { status: status.toUpperCase(), data };
         }
       } catch (e) { /* ignore */ }
     }
-    return 'PENDING';
+    return null;
   } catch (err) {
     console.error("💥 Error checking 3Thix API:", err.message);
-    return 'PENDING';
+    return null;
   }
 }
 
-async function syncToPaymentTransactions(sheets, invoiceId, status) {
-  if (!sheets || !GOOGLE_SHEET_ID || status !== 'SUCCESS') return;
-
+async function syncToPaymentTransactions(sheets, invoiceId, status, email, name) {
+  if (!sheets || !GOOGLE_SHEET_ID) return;
   try {
-    // Insert New Row (We assume it doesn't exist if we are calling this from Step 2 or 3)
-    // The caller handles the check.
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:F",
-      valueInputOption: "RAW",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: {
-        values: [[invoiceId, 'SUCCESS', '', '', 'NO', '']]
+    // Check if exists first to avoid double append
+    const existing = await findInPaymentTransactions(sheets, invoiceId);
+    if (!existing) {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        range: "PAYMENT_TRANSACTIONS!A2:F",
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: {
+          values: [[invoiceId, status, email || '', name || '', 'NO', '']]
+        }
+      });
+      console.log(`[SYNC] Inserted new row in PAYMENT_TRANSACTIONS for ${invoiceId}`);
+    } else {
+      // If it exists but status is different, update it
+      if (existing.STATUS !== status) {
+        await updatePaymentTransactionRow(sheets, existing.rowIndex, status, null, null, null, null);
       }
-    });
-    console.log(`[SYNC] Inserted new row in PAYMENT_TRANSACTIONS for ${invoiceId}`);
+    }
   } catch (err) {
     console.error(`[SYNC FAILED] Could not sync ${invoiceId} to PAYMENT_TRANSACTIONS`, err);
   }
 }
 
-async function sendEmailsSafe(sheets, invoiceId) {
-  // Logic moved to handleForcedSuccess to ensure strict order
-  // Keeping this as a potential standalone helper if needed, but unused in main flow now
-}
 
-/* ---------- API Handler ---------- */
+/* ---------- Control Flow & Logic ---------- */
+
 export default async function handler(req, res) {
   setCorsHeaders(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -331,43 +255,127 @@ export default async function handler(req, res) {
     const sheets = await getSheetsClient();
     if (!sheets) return res.json({ invoiceId, status: "PENDING" });
 
-    // STEP 1: PAYMENT_TRANSACTIONS (PRIMARY)
-    let paymentTransaction = await findInPaymentTransactions(sheets, invoiceId);
-    if (paymentTransaction) {
-      const status = await handleForcedSuccess(sheets, invoiceId, paymentTransaction);
-      return res.json({ invoiceId, status });
+    let finalStatus = 'PENDING';
+    let transactionData = null; // Data from 3Thix or Ledger
+
+    // 1. Check Ledgers FIRST (Transactions Sheet)
+    const ledgerTrans = await findInTransactions(sheets, invoiceId);
+    if (ledgerTrans && ['SUCCESS', 'PAID', 'COMPLETED'].includes(ledgerTrans.status)) {
+      console.log(`[SOURCE: LEDGER] Found SUCCESS in Transactions sheet`);
+      finalStatus = 'SUCCESS';
+      transactionData = ledgerTrans;
     }
 
-    // STEP 2: Other Sheets (SECONDARY)
-    const otherSheetStatus = await findInOtherSheets(sheets, invoiceId);
-    if (otherSheetStatus === 'SUCCESS') {
-      console.log(`[STEP 2] Found in other sheets, syncing...`);
-      await syncToPaymentTransactions(sheets, invoiceId, 'SUCCESS');
+    // 2. If not in Ledger, Check 3Thix API
+    if (finalStatus !== 'SUCCESS') {
+      const apiResult = await check3ThixSafe(invoiceId);
+      if (apiResult && ['SUCCESS', 'PAID', 'COMPLETED'].includes(apiResult.status)) {
+        console.log(`[SOURCE: API] Found SUCCESS in 3Thix API`);
+        finalStatus = 'SUCCESS';
+        const data = apiResult.data;
 
-      // Re-fetch to handle via standard flow
-      paymentTransaction = await findInPaymentTransactions(sheets, invoiceId);
-      if (paymentTransaction) {
-        await handleForcedSuccess(sheets, invoiceId, paymentTransaction);
+        // Parse metadata safely
+        let metadata = {};
+        try { metadata = typeof data.metadata === 'string' ? JSON.parse(data.metadata) : data.metadata || {}; } catch (e) { }
+
+        // WRITE TO ALL LEDGERS (Missing piece)
+        // A. Transactions
+        await appendToTransactions(sheets, [
+          data.merchant_ref_id || '',
+          "NILA TOKEN - Mindwave", // Description
+          data.amount || '',
+          data.currency || '',
+          'SUCCESS',
+          "3THIX",
+          invoiceId,
+          data.fee || '0',
+          metadata.paymentBlocked ? 'BLOCKED' : '',
+          '', // Country hard to get from here if not in metadata or response
+          '', // Notes
+          new Date().toISOString()
+        ]);
+
+        // B. TransactionActivityLog
+        await appendToActivityLog(sheets, [
+          crypto.randomUUID(),
+          invoiceId,
+          data.merchant_ref_id || '',
+          "PAYMENT_SUCCESS",
+          data.amount || '',
+          data.currency || '',
+          "3THIX",
+          '', // Country
+          '', // User Agent
+          '', // IP
+          JSON.stringify(metadata),
+          new Date().toISOString()
+        ]);
+
+        // C. PaymentAdditionalInfo
+        const name = metadata.name || '';
+        const email = metadata.email || '';
+        if (name || email) {
+          await appendToAdditionalInfo(sheets, [
+            invoiceId,
+            data.merchant_ref_id || '',
+            name,
+            email,
+            data.amount || '',
+            data.currency || '',
+            'SUCCESS',
+            new Date().toISOString()
+          ]);
+        }
       }
-      return res.json({ invoiceId, status: "SUCCESS" });
     }
 
-    // STEP 3: 3Thix API (LAST RESORT)
-    const apiStatus = await check3ThixSafe(invoiceId);
-    if (apiStatus === 'SUCCESS') {
-      console.log(`[STEP 3] 3Thix API confirmed SUCCESS, syncing...`);
-      await syncToPaymentTransactions(sheets, invoiceId, 'SUCCESS');
+    // 3. Sync to PAYMENT_TRANSACTIONS (The View Layer)
+    // We do this regardless of success/pending to ensure the row exists, but specifically handle success updates
+    // Fetch current state in PAYMENT_TRANSACTIONS
+    let ptRow = await findInPaymentTransactions(sheets, invoiceId);
 
-      // Re-fetch to handle via standard flow
-      paymentTransaction = await findInPaymentTransactions(sheets, invoiceId);
-      if (paymentTransaction) {
-        await handleForcedSuccess(sheets, invoiceId, paymentTransaction);
+    if (!ptRow) {
+      // If it doesn't exist, we should create it (likely PENDING unless 3Thix found it)
+      // However, create-payment-invoice should have created it. If missing, we create.
+      // We try to get email/name from transactionData if available (from 3Thix check)
+      // NOTE: We do NOT rely on other sheets for hydration anymore. 
+      // If it's missing here, it might be a weird edge case.
+      await syncToPaymentTransactions(sheets, invoiceId, finalStatus, null, null);
+      ptRow = await findInPaymentTransactions(sheets, invoiceId); // Refresh
+    } else {
+      // If status changed to SUCCESS, update it
+      if (ptRow.STATUS !== 'SUCCESS' && finalStatus === 'SUCCESS') {
+        await updatePaymentTransactionRow(sheets, ptRow.rowIndex, 'SUCCESS', null, null, null, null);
+        ptRow.STATUS = 'SUCCESS'; // Update local obj for next step
       }
-      return res.json({ invoiceId, status: "SUCCESS" });
     }
 
-    console.log(`[STATUS CHECK] invoiceId=${invoiceId} status=${apiStatus}`);
-    return res.json({ invoiceId, status: apiStatus });
+    // 4. Email Logic (The FINAL Step)
+    if (finalStatus === 'SUCCESS' && ptRow && ptRow.EMAIL_SENT !== 'YES') {
+      const email = ptRow.EMAIL;
+      const name = ptRow.NAME;
+
+      if (email) {
+        console.log(`[EMAIL TRIGGER] Attempting to send email to ${email}`);
+        try {
+          // THIS MUST SUCCEED for us to mark as sent
+          await processSuccessfulPayment(invoiceId, email, name);
+
+          // If we get here, it succeeded
+          await updatePaymentTransactionRow(sheets, ptRow.rowIndex, null, null, null, 'YES', new Date().toISOString());
+          console.log(`[EMAIL SENT] Marked as YES for ${invoiceId}`);
+        } catch (emailErr) {
+          console.error(`[EMAIL FAILED] Could not send email for ${invoiceId}`, emailErr);
+          // We do NOT mark as sent, so it will retry next polling
+        }
+      } else {
+        console.warn(`[EMAIL SKIP] Success but no email in PAYMENT_TRANSACTIONS for ${invoiceId}`);
+      }
+    } else if (ptRow && ptRow.EMAIL_SENT === 'YES') {
+      console.log(`[EMAIL SKIPPED - ALREADY SENT] ${invoiceId}`);
+    }
+
+    return res.json({ invoiceId, status: finalStatus });
 
   } catch (err) {
     console.error("[check-payment-status CRASH]", err);
