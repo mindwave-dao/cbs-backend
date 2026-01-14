@@ -1,77 +1,76 @@
+import { handlePaymentLogic } from "../../lib/payment-logic.js";
+import getRawBody from "raw-body";
 
-import { handlePaymentLogic, validatePaymentEnv } from "../../lib/payment-logic.js";
-import crypto from "crypto";
+/*
+  WEBHOOK HANDLER: POST /api/webhooks/3thix
+  Secured by Authorization header.
+*/
 
-/* ---------- Helper: Verify Signature ---------- */
-function verifyWebhookSignature(req) {
-  // If WEBHOOK_SECRET is set, we prefer HMAC verification
-  const secret = process.env.WEBHOOK_SECRET;
-  if (secret) {
-    const signature = req.headers['x-3thix-signature'];
-    if (!signature) return false;
-    const body = JSON.stringify(req.body);
-    const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-  }
-
-  // Fallback: Check BEARER Token
-  const authHeader = req.headers['authorization'];
-  const expectedToken = process.env.WEBHOOK_AUTH_TOKEN;
-  if (!expectedToken) return true; // CRITICAL: If no token set, we fail open or close? Typically fail open is bad.
-  // We assume strict security.
-  if (!authHeader) return false;
-  const token = authHeader.split(" ")[1];
-  return token === expectedToken;
-}
+export const config = {
+  api: {
+    bodyParser: false, // We need raw body for potential signature verification or just standard parsing if we want control
+  },
+};
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
   try {
-    // 1. Validate Env
-    validatePaymentEnv();
+    // 1. Auth Check
+    const authHeader = req.headers.authorization;
+    const expectedToken = process.env.WEBHOOK_AUTH_TOKEN;
 
-    // 2. Auth Check
-    if (!verifyWebhookSignature(req)) {
-      console.warn("[WEBHOOK UNAUTHORIZED] Invalid signature or token");
-      return res.status(401).send("Unauthorized");
+    if (!expectedToken || authHeader !== `Bearer ${expectedToken}`) {
+      console.warn("[WEBHOOK AUTH FAILED] Invalid token");
+      return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const event = req.body;
-    console.log(`[WEBHOOK RECEIVED] Event: ${event.type || 'UNKNOWN'}`);
-
-    // 3. Extract Invoice ID from event
-    // 3Thix events: INVOICE_STATUS_CHANGED, INVOICE_PAID, ORDER_COMPLETED
-    // Payload usually has { type: "...", data: { invoice_id: "..." } } or similar
-    // Check various paths
-    let invoiceId = null;
-    if (event.data) {
-      invoiceId = event.data.invoice_id || event.data.id;
+    // 2. Parse Body
+    const buffer = await getRawBody(req);
+    const bodyStr = buffer.toString('utf-8');
+    let body;
+    try {
+      body = JSON.parse(bodyStr);
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid JSON" });
     }
 
-    // If not found in common paths, check if the event itself is the object (unlikely but possible)
-    if (!invoiceId && event.invoice_id) invoiceId = event.invoice_id;
+    console.log("[WEBHOOK RECEIVED]", JSON.stringify(body));
+
+    // 3. Extract Invoice ID & Event
+    // Payload structure varies; try multiple paths
+    const invoiceId = body.invoice?.id || body.order?.id || body.payload?.invoiceId || body.id;
+    const event = body.event || body.type;
+    const status = body.invoice?.status || body.status;
 
     if (!invoiceId) {
-      console.warn("[WEBHOOK SKIPPED] No invoice_id found in payload");
-      return res.status(200).send("Skipped (No Invoice ID)");
+      console.warn("[WEBHOOK SKIPPED] No invoice ID found");
+      return res.status(400).json({ error: "Missing invoice ID" });
     }
 
-    // 4. Trigger Shared Logic (Fire-and-forget or await?)
-    // Requirement: "Return HTTP 200 quickly; do heavy work in background... make sure to ack 200 <= 10s"
-    // Since we are serverless (Vercel), we MUST await or the process dies.
-    // We will await, but the shared logic is optimized.
+    // 4. Process Logic
+    // We only really care if it's PAID or status changed to PAID.
+    // However, for completeness, we can trigger the logic which handles all statuses.
+    // The shared logic uses idempotent checks so safe to call repeatedly.
 
-    // We pass 'WEBHOOK' as source
-    const result = await handlePaymentLogic(invoiceId, 'WEBHOOK');
+    if (event === 'INVOICE_PAID' ||
+      event === 'ORDER_COMPLETED' ||
+      status === 'PAID' ||
+      status === 'APPROVED' ||
+      (event === 'INVOICE_STATUS_CHANGED' && status === 'PAID')) {
 
-    console.log(`[WEBHOOK PROCESSED] ${invoiceId} -> ${result.status}`);
+      console.log(`[WEBHOOK PROCESSING] Invoice ${invoiceId}`);
+      await handlePaymentLogic(invoiceId, 'WEBHOOK');
+    } else {
+      console.log(`[WEBHOOK IGNORED] Status not PAID/APPROVED: ${event} / ${status}`);
+    }
 
-    return res.status(200).json({ received: true, processed: true });
+    return res.status(200).json({ ok: true });
 
-  } catch (e) {
-    console.error("[WEBHOOK ERROR]", e);
-    // Return 500 so 3Thix retries
-    return res.status(500).send("Internal Server Error");
+  } catch (err) {
+    console.error("[WEBHOOK ERROR]", err);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 }
