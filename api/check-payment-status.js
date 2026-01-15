@@ -25,12 +25,15 @@ export default async function handler(req, res) {
     const result = await handlePaymentLogic(invoiceId, '3THIX_API');
 
     // 8️⃣ Backend Status Contract (Authoritative)
-    // Return ONLY: invoiceId, status, source, emailSent
+    // Return ONLY specified fields
     const response = {
       invoiceId: result.invoiceId,
       status: result.status, // "PENDING | PROCESSING | SUCCESS | FAILED"
-      source: result.source,
-      emailSent: result.emailSent
+      amount: result.amount,
+      currency: result.currency,
+      tokens: result.tokens,
+      emailSentUser: result.emailSentUser,
+      emailSentAdmin: result.emailSentAdmin
     };
 
     return res.json(response);
@@ -40,8 +43,7 @@ export default async function handler(req, res) {
     return res.json({
       invoiceId,
       status: "PENDING",
-      source: "ERROR",
-      error: err.message
+      error: "Internal Error" // Do not expose err.message
     });
   }
 }
