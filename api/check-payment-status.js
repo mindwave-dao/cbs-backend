@@ -24,7 +24,16 @@ export default async function handler(req, res) {
     // source='3THIX_API' is the default for polling
     const result = await handlePaymentLogic(invoiceId, '3THIX_API');
 
-    return res.json(result);
+    // 8️⃣ Backend Status Contract (Authoritative)
+    // Return ONLY: invoiceId, status, source, emailSent
+    const response = {
+      invoiceId: result.invoiceId,
+      status: result.status, // "PENDING | PROCESSING | SUCCESS | FAILED"
+      source: result.source,
+      emailSent: result.emailSent
+    };
+
+    return res.json(response);
 
   } catch (err) {
     console.error("[check-payment-status CRASH]", err);

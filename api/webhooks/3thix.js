@@ -67,7 +67,7 @@ export default async function handler(req, res) {
       // Requirement: "Respond 200 quickly. If processing is heavy, respond 202 and queue background..."
       // Node.js serverless functions (Vercel) need to await before return usually, unless using background functions.
       // Standard: await it. It shouldn't be too slow (couple of internal fetches).
-      await handlePaymentLogic(invoiceId, 'WEBHOOK');
+      await handlePaymentLogic(invoiceId, 'WEBHOOK', body);
     } else {
       console.log(`[WEBHOOK IGNORED] Event type irrelevant: ${event}`);
     }

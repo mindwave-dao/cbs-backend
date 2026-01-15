@@ -321,6 +321,18 @@ export default async function handler(req, res) {
    */
   const paymentBlocked = country === "US";
 
+  // Check for existing session invoice first
+  if (req.body.invoiceIdFromSession) {
+    const existingInvoiceId = req.body.invoiceIdFromSession;
+    console.log(`[RESUMING INVOICE] Found existing invoiceId=${existingInvoiceId}`);
+
+    // Return immediately to let frontend handle resume
+    return res.json({
+      invoiceId: existingInvoiceId,
+      resume: true
+    });
+  }
+
   // Accept name, email from request body
   const { amount, currency, quantity = 1, name, email } = req.body;
   const description = "NILA TOKEN - Mindwave";
