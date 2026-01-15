@@ -8,7 +8,7 @@ import getRawBody from "raw-body";
 
 export const config = {
   api: {
-    bodyParser: false, // We need raw body for potential signature verification or just standard parsing if we want control
+    bodyParser: false,
   },
 };
 
@@ -18,11 +18,16 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Auth Check
+    // 1. Auth Check (Critical)
     const authHeader = req.headers.authorization;
     const expectedToken = process.env.WEBHOOK_AUTH_TOKEN;
 
-    if (!expectedToken || authHeader !== `Bearer ${expectedToken}`) {
+    if (!expectedToken) {
+      console.error("[WEBHOOK FATAL] WEBHOOK_AUTH_TOKEN not set in env");
+      return res.status(500).json({ error: "Server Configuration Error" });
+    }
+
+    if (authHeader !== `Bearer ${expectedToken}`) {
       console.warn("[WEBHOOK AUTH FAILED] Invalid token");
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -39,32 +44,32 @@ export default async function handler(req, res) {
 
     console.log("[WEBHOOK RECEIVED]", JSON.stringify(body));
 
-    // 3. Extract Invoice ID & Event
-    // Payload structure varies; try multiple paths
+    // 3. Extract logic
     const invoiceId = body.invoice?.id || body.order?.id || body.payload?.invoiceId || body.id;
     const event = body.event || body.type;
-    const status = body.invoice?.status || body.status;
+    // const status = body.invoice?.status || body.status;
 
     if (!invoiceId) {
       console.warn("[WEBHOOK SKIPPED] No invoice ID found");
       return res.status(400).json({ error: "Missing invoice ID" });
     }
 
-    // 4. Process Logic
-    // We only really care if it's PAID or status changed to PAID.
-    // However, for completeness, we can trigger the logic which handles all statuses.
-    // The shared logic uses idempotent checks so safe to call repeatedly.
+    // 4. Processing
+    // We simply pass every valid webhook event for a given Invoice ID to the shared logic.
+    // The shared logic will idempotently check 3Thix (authoritative) or use provided data if authoritative fails.
+    // We strictly filter for Payment events to avoid noise, OR just pass everything?
+    // Requirement says: "For invoice events (INVOICE_PAID, INVOICE_STATUS_CHANGED, ORDER_COMPLETED)..."
+    // Let's be permissive but efficient.
 
-    if (event === 'INVOICE_PAID' ||
-      event === 'ORDER_COMPLETED' ||
-      status === 'PAID' ||
-      status === 'APPROVED' ||
-      (event === 'INVOICE_STATUS_CHANGED' && status === 'PAID')) {
-
-      console.log(`[WEBHOOK PROCESSING] Invoice ${invoiceId}`);
+    if (event?.includes('INVOICE') || event?.includes('ORDER') || event?.includes('PAYMENT')) {
+      console.log(`[WEBHOOK PROCESSING] Invoice ${invoiceId} / Event ${event}`);
+      // We do not await this if we want to return 202 quickly?
+      // Requirement: "Respond 200 quickly. If processing is heavy, respond 202 and queue background..."
+      // Node.js serverless functions (Vercel) need to await before return usually, unless using background functions.
+      // Standard: await it. It shouldn't be too slow (couple of internal fetches).
       await handlePaymentLogic(invoiceId, 'WEBHOOK');
     } else {
-      console.log(`[WEBHOOK IGNORED] Status not PAID/APPROVED: ${event} / ${status}`);
+      console.log(`[WEBHOOK IGNORED] Event type irrelevant: ${event}`);
     }
 
     return res.status(200).json({ ok: true });
