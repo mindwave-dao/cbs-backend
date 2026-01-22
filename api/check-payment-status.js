@@ -33,7 +33,8 @@ export default async function handler(req, res) {
       currency: result.currency,
       tokens: result.tokens,
       emailSentUser: result.emailSentUser,
-      emailSentAdmin: result.emailSentAdmin
+      emailSentAdmin: result.emailSentAdmin,
+      walletAddress: result.walletAddress
     };
 
     return res.json(response);

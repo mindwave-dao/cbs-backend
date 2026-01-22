@@ -63,7 +63,11 @@ const SHEET_HEADERS = [
   "EMAIL",
   "NAME",
   "EMAIL_SENT",
-  "EMAIL_SENT_AT"
+  "EMAIL_SENT_AT",
+  "TOKEN_PRICE",
+  "TOKENS_PURCHASED",
+  "ADMIN_EMAIL_SENT",
+  "WALLET_ADDRESS"
 ];
 
 let headersInitialized = false;
@@ -72,26 +76,27 @@ async function ensureHeadersExist(sheetsClient) {
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A1:F1"
+      range: "PAYMENT_TRANSACTIONS!A1:J1"
     });
 
     const existingHeaders = response.data.values?.[0];
 
-    if (!existingHeaders || !existingHeaders[0]) {
+    // If headers are missing OR if we have old headers (length < 10), update/append
+    if (!existingHeaders || !existingHeaders[0] || existingHeaders.length < SHEET_HEADERS.length) {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:F1",
+        range: "PAYMENT_TRANSACTIONS!A1:J1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
-      console.log("Added headers to PAYMENT_TRANSACTIONS sheet");
+      console.log("Updated headers in PAYMENT_TRANSACTIONS sheet");
     }
   } catch (err) {
     console.warn("Header check failed, attempting to add:", err.message);
     try {
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEET_ID,
-        range: "PAYMENT_TRANSACTIONS!A1:F1",
+        range: "PAYMENT_TRANSACTIONS!A1:J1",
         valueInputOption: "RAW",
         requestBody: { values: [SHEET_HEADERS] }
       });
@@ -113,7 +118,7 @@ async function appendToGoogleSheets(row) {
 
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEET_ID,
-      range: "PAYMENT_TRANSACTIONS!A2:F",
+      range: "PAYMENT_TRANSACTIONS!A2:J",
       valueInputOption: "RAW",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: [row] }
@@ -333,8 +338,17 @@ export default async function handler(req, res) {
     });
   }
 
-  // Accept name, email from request body
+  // Accept name, email, walletAddress from request body
   const { amount, currency, quantity = 1, name, email } = req.body;
+  let { walletAddress } = req.body; // Mutable to allow sanitization
+
+  // Sanitize walletAddress
+  if (!walletAddress || typeof walletAddress !== 'string') {
+    walletAddress = "";
+  } else {
+    walletAddress = walletAddress.trim().substring(0, 128); // Max length 128
+  }
+
   const description = "NILA TOKEN - Mindwave";
 
   if (!amount || typeof amount !== "number" || amount <= 0) {
@@ -357,6 +371,7 @@ export default async function handler(req, res) {
   const userMetadata = {
     name: name || "",
     email: email || "",
+    walletAddress, // Added to metadata
     paymentBlocked
   };
 
@@ -429,7 +444,11 @@ export default async function handler(req, res) {
       email || "",
       name || "",
       "NO",
-      ""
+      "",
+      "", // TOKEN_PRICE
+      "", // TOKENS_PURCHASED
+      "NO", // ADMIN_EMAIL_SENT (Default)
+      walletAddress // WALLET_ADDRESS (Index 9)
     ]);
 
   } catch (err) {
