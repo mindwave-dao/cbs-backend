@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import crypto from "crypto";
+import { finalizePaymentStatus } from "../lib/finalize-payment.js";
 
 const {
   GOOGLE_SHEET_ID,
@@ -516,6 +517,14 @@ export default async function handler(req, res) {
     }
 
     console.log(`Payment callback processed: ${finalInvoiceId} - ${mappedStatus}`);
+
+    // Run Finalizer Logic (Syncs ledgers, sends emails, returns unified status)
+    console.log(`[WEBHOOK] Running finalizer for ${finalInvoiceId}`);
+    try {
+      await finalizePaymentStatus(finalInvoiceId);
+    } catch (e) {
+      console.warn(`[WEBHOOK] Finalizer failed (non-blocking): ${e.message}`);
+    }
 
     // Return success response
     return res.status(200).json({

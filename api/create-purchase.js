@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import crypto from "crypto";
+import { appendToAdditionalInfo } from "../lib/sheets.logic.js";
 // import { isGeoRestricted } from "../lib/geo.js"; // Geo restriction might not be needed for purchase-only, but keeping consistency if desired
 
 const {
@@ -149,7 +150,7 @@ export default async function handler(req, res) {
         req.headers["x-real-ip"] || "";
 
     // Extract body parameters
-    const { amount, currency, description, quantity = 1, name, email, ...extraParams } = req.body;
+    const { amount, currency, description, quantity = 1, name, email, wallet_address, ...extraParams } = req.body;
 
     if (!amount || typeof amount !== "number" || amount <= 0) {
         return res.status(400).json({ error: "Invalid amount" });
@@ -171,6 +172,7 @@ export default async function handler(req, res) {
     const userMetadata = {
         name: name || "",
         email: email || "",
+        wallet_address: wallet_address || "",
         type: "purchase",
         ...extraParams // Pass through other params if needed
     };
@@ -241,6 +243,26 @@ export default async function handler(req, res) {
         JSON.stringify(userMetadata),  // metadata
         new Date().toISOString()       // timestamp
     ]);
+
+    // Store additional info (Wallet Address etc) specifically 
+    try {
+        // Assuming appendToAdditionalInfo is imported or defined elsewhere
+        // For this change, we'll assume it's available in scope or imported at the top.
+        // If not, a real-world change would require adding:
+        // import { appendToAdditionalInfo } from '../../lib/sheets.logic'; // Example path
+        await appendToAdditionalInfo([
+            merchant_ref_id,
+            invoiceId,
+            name || "",
+            email || "",
+            new Date().toISOString(),
+            wallet_address || ""
+        ]);
+        console.log("Additional info (wallet address) saved");
+    } catch (e) {
+        console.error("Failed to save additional info:", e);
+        // Do not fail the request, just log
+    }
 
     res.status(200).json({
         invoiceId,
