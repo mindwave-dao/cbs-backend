@@ -1,7 +1,7 @@
 import { google } from "googleapis";
 import crypto from "crypto";
 import { appendToAdditionalInfo } from "../lib/sheets.logic.js";
-import { validateWalletAddress, detectWalletNetwork } from "../lib/payment-logic.js";
+import { validateWalletAddress, detectWalletNetwork, syncToPaymentTransactions } from "../lib/payment-logic.js";
 // import { isGeoRestricted } from "../lib/geo.js"; // Geo restriction might not be needed for purchase-only, but keeping consistency if desired
 
 const {
@@ -271,6 +271,13 @@ export default async function handler(req, res) {
             wallet_address || ""
         ]);
         console.log("Additional info (wallet address) saved");
+
+        // COMPLIANCE: Write to PAYMENT_TRANSACTIONS
+        const sheetsClient = getGoogleSheets();
+        if (sheetsClient) {
+            await syncToPaymentTransactions(sheetsClient, invoiceId, "PENDING", email, name, "", "", wallet_address);
+        }
+
     } catch (e) {
         console.error("Failed to save additional info:", e);
         // Do not fail the request, just log
