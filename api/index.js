@@ -43,6 +43,11 @@ export default async function handler(req, res) {
             // Updated to use Read-Only Logic
             const { checkPaymentStatusLogic } = await import("../lib/payment-logic.js");
             const result = await checkPaymentStatusLogic(invoiceId);
+
+            if (result.status === 'NOT_FOUND') {
+                return res.status(404).json(result);
+            }
+
             return res.status(200).json(result);
         } catch (e) {
             console.error("Check Status Error:", e);
