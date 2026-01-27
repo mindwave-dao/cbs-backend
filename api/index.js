@@ -40,18 +40,10 @@ export default async function handler(req, res) {
         if (!invoiceId) return res.status(400).json({ error: "Missing invoiceId" });
 
         try {
-            const result = await handlePaymentLogic(invoiceId, 'POLLING');
-            // Format response as requested
-            // { invoiceId, status, emailSent, source }
-            // Plus legacy fields if needed to avoid breaking frontend immediately?
-            // Prompt said "Return: invoiceId, status, emailSent, source".
-            // Legacy returned tokens/amount etc.
-            // Let's return full object from `handlePaymentLogic` if it returns it?
-            // `handlePaymentLogic` currently returns simplified object.
-            // I should probably enhance it to return more data if I want full compat, 
-            // but for now I follow the prompt's Goal output for check-payment-status:
-            // { invoiceId, status, emailSent, source }
-            return res.json(result);
+            // Updated to use Read-Only Logic
+            const { checkPaymentStatusLogic } = await import("../lib/payment-logic.js");
+            const result = await checkPaymentStatusLogic(invoiceId);
+            return res.status(200).json(result);
         } catch (e) {
             console.error("Check Status Error:", e);
             return res.status(500).json({ error: "Internal Error" });
