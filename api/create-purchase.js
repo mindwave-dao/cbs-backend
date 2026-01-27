@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 import crypto from "crypto";
 import { appendToAdditionalInfo } from "../lib/sheets.logic.js";
+import { validateWalletAddress, detectWalletNetwork } from "../lib/payment-logic.js";
 // import { isGeoRestricted } from "../lib/geo.js"; // Geo restriction might not be needed for purchase-only, but keeping consistency if desired
 
 const {
@@ -168,11 +169,22 @@ export default async function handler(req, res) {
         : 'http://localhost:3000';
     const callback_url = `${baseUrl}/api/payment-callback`;
 
+    // Validate wallet format if provided
+    if (wallet_address && !validateWalletAddress(wallet_address)) {
+        return res.status(400).json({
+            success: false,
+            error: "Invalid wallet address format"
+        });
+    }
+
+    const walletNetwork = detectWalletNetwork(wallet_address);
+
     // Store user info in metadata
     const userMetadata = {
         name: name || "",
         email: email || "",
         wallet_address: wallet_address || "",
+        walletNetwork: walletNetwork || "", // New field
         type: "purchase",
         ...extraParams // Pass through other params if needed
     };
