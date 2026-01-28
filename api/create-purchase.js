@@ -1,7 +1,7 @@
 import { google } from "googleapis";
 import crypto from "crypto";
-import { appendToAdditionalInfo } from "../lib/sheets.logic.js";
-import { validateWalletAddress, detectWalletNetwork, syncToPaymentTransactions } from "../lib/payment-logic.js";
+
+import { validateWalletAddress, detectWalletNetwork } from "../lib/payment-logic.js";
 // import { isGeoRestricted } from "../lib/geo.js"; // Geo restriction might not be needed for purchase-only, but keeping consistency if desired
 
 const {
@@ -257,31 +257,25 @@ export default async function handler(req, res) {
         new Date().toISOString()       // timestamp
     ]);
 
-    // Store additional info (Wallet Address etc) specifically 
+    // COMPLIANCE: Write to PAYMENT_TRANSACTIONS (Strict Single Row)
     try {
-        // Assuming appendToAdditionalInfo is imported or defined elsewhere
-        // For this change, we'll assume it's available in scope or imported at the top.
-        // If not, a real-world change would require adding:
-        // import { appendToAdditionalInfo } from '../../lib/sheets.logic'; // Example path
-        await appendToAdditionalInfo([
-            merchant_ref_id,
-            invoiceId,
-            name || "",
-            email || "",
-            new Date().toISOString(),
-            wallet_address || ""
-        ]);
-        console.log("Additional info (wallet address) saved");
-
-        // COMPLIANCE: Write to PAYMENT_TRANSACTIONS
         const sheetsClient = getGoogleSheets();
         if (sheetsClient) {
-            await syncToPaymentTransactions(sheetsClient, invoiceId, "CREATED", email, name, "", "", wallet_address);
+            const walletNetwork = detectWalletNetwork(wallet_address);
+            // Use new helper
+            const { createPaymentTransaction } = await import("../lib/payment-logic.js");
+            await createPaymentTransaction(sheetsClient, {
+                invoiceId,
+                email,
+                name,
+                walletAddress: wallet_address,
+                walletNetwork,
+                amount: amount.toString(),
+                currency
+            });
         }
-
     } catch (e) {
-        console.error("Failed to save additional info:", e);
-        // Do not fail the request, just log
+        console.error("Failed to save transaction info:", e);
     }
 
     res.status(200).json({
