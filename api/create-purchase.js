@@ -12,13 +12,11 @@ const {
     GOOGLE_SHEETS_CREDENTIALS
 } = process.env;
 
-/* ---------- CORS Setup ---------- */
-function setCorsHeaders(res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    res.setHeader('Access-Control-Max-Age', '86400');
-}
+import { applyCors } from "../lib/cors.js";
+
+// Duplicate variable declaration removed
+
+// CORS logic is now handled by applyCors imported from ../lib/cors.js
 
 /* ---------- Google Sheets Setup (lazy init) ---------- */
 let sheets = null;
@@ -128,12 +126,7 @@ async function appendToActivityLog(row) {
 /* ---------- API Handler ---------- */
 export default async function handler(req, res) {
     // Set CORS headers for all requests
-    setCorsHeaders(res);
-
-    // Handle preflight OPTIONS request
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (applyCors(req, res)) return;
 
     if (req.method !== "POST") {
         return res.status(405).json({ error: "Method not allowed" });

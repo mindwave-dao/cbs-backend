@@ -6,7 +6,11 @@ import { getPrice } from "../lib/price.js";
   Public endpoint to get current NILA price.
 */
 
+import { applyCors } from "../lib/cors.js";
+
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
+
     if (req.method !== 'GET') {
         return res.status(405).json({ error: "Method not allowed" });
     }

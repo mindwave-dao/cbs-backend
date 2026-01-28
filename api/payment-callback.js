@@ -370,13 +370,14 @@ async function checkExistingPayment(invoiceId) {
 }
 
 /* ---------- API Handler ---------- */
-export default async function handler(req, res) {
-  setCorsHeaders(res);
+import { applyCors } from "../lib/cors.js";
 
-  // Handle preflight OPTIONS request
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+// ... (other imports)
+
+export default async function handler(req, res) {
+  if (applyCors(req, res)) return;
+
+  // Handle preflight OPTIONS request (handled by applyCors)
 
   // ONLY Allow POST (Webhooks)
   if (req.method === 'GET') {

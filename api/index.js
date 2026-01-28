@@ -1,4 +1,4 @@
-
+import { applyCors } from "../lib/cors.js";
 import { validateEnv } from "../lib/env.js";
 import { createInvoiceLogic, handlePaymentLogic } from "../lib/payment.logic.js";
 import { handle3ThixWebhook } from "../lib/webhook.logic.js";
@@ -8,10 +8,7 @@ import { emailHealthCheck } from "../lib/email.logic.js";
 // Router
 export default async function handler(req, res) {
     // CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    if (req.method === 'OPTIONS') return res.status(200).end();
+    if (applyCors(req, res)) return;
 
     try {
         validateEnv();

@@ -9,12 +9,10 @@ function setCorsHeaders(res) {
     res.setHeader('Access-Control-Max-Age', '86400');
 }
 
-export default async function handler(req, res) {
-    setCorsHeaders(res);
+import { applyCors } from "../lib/cors.js";
 
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
 
     if (req.method !== 'GET') {
         return res.status(405).json({
