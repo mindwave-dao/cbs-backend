@@ -322,7 +322,7 @@ function mapStatusToEventType(status) {
  * Only record final states: success, failed, timeout, cancelled
  */
 function shouldRecordStatus(status) {
-  const recordableStatuses = ['SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELLED'];
+  const recordableStatuses = ['SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELLED', 'PROCESSING'];
   return recordableStatuses.includes(status);
 }
 

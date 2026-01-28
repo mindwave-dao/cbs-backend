@@ -161,6 +161,12 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Missing required fields" });
     }
 
+    // STRICT EMAIL VALIDATION
+    const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (email && !EMAIL_REGEX.test(email)) {
+        return res.status(400).json({ error: "Invalid email format" });
+    }
+
     const merchant_ref_id = `mw-purchase-${Date.now()}`;
 
     // Build callback URL 
