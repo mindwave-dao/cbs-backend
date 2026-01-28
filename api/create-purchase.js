@@ -197,6 +197,7 @@ export default async function handler(req, res) {
         amount: amount.toString(),
         merchant_ref_id,
         callback_url,
+        return_url: `${baseUrl}/payment-success.html`, // Redirect to success page directly
         metadata: JSON.stringify(userMetadata),
         cart: [
             {
@@ -275,7 +276,7 @@ export default async function handler(req, res) {
         // COMPLIANCE: Write to PAYMENT_TRANSACTIONS
         const sheetsClient = getGoogleSheets();
         if (sheetsClient) {
-            await syncToPaymentTransactions(sheetsClient, invoiceId, "PENDING", email, name, "", "", wallet_address);
+            await syncToPaymentTransactions(sheetsClient, invoiceId, "CREATED", email, name, "", "", wallet_address);
         }
 
     } catch (e) {

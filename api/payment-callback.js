@@ -378,14 +378,20 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // Accept both GET (redirect callbacks) and POST (webhooks)
-  if (req.method !== "POST" && req.method !== "GET") {
+  // ONLY Allow POST (Webhooks)
+  if (req.method === 'GET') {
+    // Stateless redirect check - do NOT write to sheets
+    console.log("Ignored GET request to payment-callback (stateless redirect)");
+    return res.status(200).json({ message: "Redirect ignored. Webhook required for status update." });
+  }
+
+  if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    // Parse callback data from either query params (GET) or body (POST)
-    let data = req.method === 'GET' ? req.query : req.body;
+    // Parse callback data from body (POST only)
+    let data = req.body;
 
     // Check for 3thix Webhook Wrapper (signature + payload)
     if (data && data.payload && data.signature) {
