@@ -30,29 +30,20 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1.A. Log Headers (Temporary for debugging)
-    console.log("Webhook Headers:", JSON.stringify(req.headers, null, 2));
-
     // 2. Auth Token Validation (Loose Match)
+    // Check this BEFORE reading body to fail fast if unauthorized
     const authHeader = req.headers['authorization'];
     if (!authHeader || !authHeader.includes(WEBHOOK_AUTH_TOKEN)) {
       console.error("[WEBHOOK SECURITY] Invalid or missing Authorization header");
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // 3. Get Raw Body & Parse
+    // 3. Get Raw Body (Required for HMAC)
     const rawBodyBuffer = await getRawBody(req);
     const rawBodyString = rawBodyBuffer.toString("utf8");
-    let data;
-    try {
-      data = JSON.parse(rawBodyString);
-    } catch (e) {
-      console.error("[WEBHOOK ERROR] Failed to parse JSON body");
-      return res.status(400).json({ error: "Invalid JSON" });
-    }
 
     // 4. HMAC Verification (Section 2 - RAW BODY)
-    const signature = req.headers['x-webhook-signature']; // 3Thix header
+    const signature = req.headers['x-webhook-signature'];
 
     if (!THIX_WEBHOOK_SECRET) {
       console.error("[WEBHOOK CONFIG] Missing THIX_WEBHOOK_SECRET");
@@ -60,15 +51,11 @@ export default async function handler(req, res) {
     }
 
     if (!signature) {
-      // If we strictly require signature. 3Thix docs say checks header.
       console.error("[WEBHOOK SECURITY] Missing signature header");
       return res.status(401).json({ error: "Missing Signature" });
     }
 
     const hmac = crypto.createHmac('sha256', THIX_WEBHOOK_SECRET);
-    // Use the BUFFER or String? crypto.update accepts buffer or string.
-    // Ideally use Buffer to avoid encoding issues, but usually utf8 string is fine.
-    // User requested "HMAC uses raw body".
     const digest = hmac.update(rawBodyBuffer).digest('hex');
 
     // Timing Safe Compare
@@ -77,12 +64,17 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Invalid Signature" });
     }
 
-    // 5. Safe Logging
-    // Extract ID first
+    // 5. Parse JSON (Safe after verification)
+    let data;
+    try {
+      data = JSON.parse(rawBodyString);
+    } catch (e) {
+      console.error("[WEBHOOK ERROR] Failed to parse JSON body");
+      return res.status(400).json({ error: "Invalid JSON" });
+    }
+
+    // 6. Safe Logging (Redacted)
     // Note: data might be wrapped in payload or direct.
-    // 3Thix docs: Standard is direct body or body.payload?
-    // User code previously checked data.payload.
-    // Let's assume standard object.
     const payload = data.payload || data;
 
     // Safety check: is payload object?
@@ -94,22 +86,27 @@ export default async function handler(req, res) {
     const shortId = invoiceId ? `...${String(invoiceId).slice(-4)}` : 'UNKNOWN';
     console.log(`[WEBHOOK] Verified payload for invoice ending in ${shortId}`);
 
-    // 6. Event/Status Acceptance (Expanded)
+    // 7. Event/Status Acceptance (Expanded)
     // Accept: ORDER_COMPLETED, INVOICE_PAID, status=PAID, payment_status=APPROVED
     const event = payload.event || payload.type || payload.status;
     const paymentStatus = payload.payment_status;
     const status = payload.status;
+    const invoiceStatus = payload.invoice?.status;
 
+    // Corrected OR-based success condition
     const isSuccess =
       event === "ORDER_COMPLETED" ||
       event === "INVOICE_PAID" ||
       status === "PAID" ||
-      paymentStatus === "APPROVED";
+      paymentStatus === "APPROVED" ||
+      invoiceStatus === "PAID"; // Added invoice.status check
 
     // Also handle FAILED
     const isFailed =
       event === "ORDER_FAILED" ||
-      status === "FAILED";
+      status === "FAILED" ||
+      status === "CANCELLED" ||
+      status === "EXPIRED";
 
     let internalStatus = null;
 
@@ -119,14 +116,19 @@ export default async function handler(req, res) {
       internalStatus = 'FAILED';
     } else {
       console.log(`[WEBHOOK IGNORE] Event not success/failed. Event: ${event}, Status: ${status}`);
+      // 200 OK for ignored events (prevents retry loop for non-critical events)
       return res.status(200).json({ ignored: true, reason: "Status not relevant" });
     }
 
     if (!invoiceId) {
-      return res.status(400).json({ error: "Missing Invoice ID in payload" });
+      // If no invoice ID, we can't do anything. 
+      // Return 200 to prevent retry loop for malformed data? 
+      // Or 400? Usually 200 if we can't process it ever.
+      console.error("[WEBHOOK ERROR] Missing Invoice ID in payload");
+      return res.status(200).json({ error: "Missing Invoice ID" });
     }
 
-    // 7. Process Logic
+    // 8. Process Logic
     // Pass 'WEBHOOK' as source.
     const result = await handlePaymentLogic(invoiceId, 'WEBHOOK', { ...payload, internalStatusOverride: internalStatus });
 
@@ -134,6 +136,7 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error("Payment callback error:", err);
+    // 500 triggers retry
     return res.status(500).json({ error: "Internal Server Error" });
   }
 }
