@@ -1,5 +1,5 @@
 
-import { checkPaymentStatusLogic } from "../lib/payment-logic.js";
+import { checkPaymentStatusLogic } from "../lib/payment.logic.js";
 
 /* ---------- CORS Setup for Read-Only ---------- */
 function setCorsHeaders(res) {
