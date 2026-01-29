@@ -1,4 +1,5 @@
-import { check3ThixAuthoritative, finalizeSuccessfulPayment, normalize3ThixStatus } from "../../lib/payment-logic.js";
+import { check3ThixAuthoritative } from "../../lib/payment-logic.js";
+import { finalizeSuccessfulPayment, normalize3ThixStatus } from "../../lib/payment.logic.js";
 import { applyCors } from "../../lib/cors.js";
 
 const { WEBHOOK_AUTH_TOKEN, ADMIN_TOKEN } = process.env;
@@ -52,7 +53,13 @@ export default async function handler(req, res) {
         }
 
         // 2. Finalize Payment (Updates Sheets, Sends Emails if needed)
-        const result = await finalizeSuccessfulPayment(invoiceId, apiResult.data, "ADMIN_RECONCILE");
+        // 2. Finalize Payment (Updates Sheets, Sends Emails if needed)
+        // Updated to use Object Signature
+        const result = await finalizeSuccessfulPayment({
+            invoiceId,
+            authoritativeSource: "ADMIN_RECONCILE",
+            thixPayload: apiResult.data || apiResult // apiResult might be the wrapper or data
+        });
 
         console.log(`[ADMIN RECONCILE] Success for ${invoiceId}`);
 
