@@ -1,4 +1,4 @@
-import { check3ThixAuthoritative, handlePaymentLogic, normalize3ThixStatus } from "../../lib/payment.logic.js";
+import { check3ThixAuthoritative, handlePaymentLogic, normalize3ThixStatus } from "../../lib/payment-logic.js";
 import { applyCors } from "../../lib/cors.js";
 
 const { WEBHOOK_AUTH_TOKEN, ADMIN_TOKEN } = process.env;
