@@ -1,5 +1,6 @@
 import { check3ThixAuthoritative } from "../../lib/payment-logic.js";
 import { finalizeSuccessfulPayment, normalize3ThixStatus } from "../../lib/payment.logic.js";
+import { reconcilePendingInvoices } from "../../lib/reconcile.logic.js";
 import { applyCors } from "../../lib/cors.js";
 
 const { WEBHOOK_AUTH_TOKEN, ADMIN_TOKEN } = process.env;
@@ -28,12 +29,24 @@ export default async function handler(req, res) {
     }
 
     const { invoiceId } = req.body;
-    if (!invoiceId) {
-        return res.status(400).json({ error: "invoiceId required" });
-    }
 
     try {
-        console.log(`[ADMIN RECONCILE] Starting for invoice: ${invoiceId}`);
+        // CASE 1: Bulk Scan (Cron Mode)
+        if (!invoiceId) {
+            console.log(`[ADMIN RECONCILE] Invoice ID missing. Starting Bulk Scan.`);
+            const result = await reconcilePendingInvoices({
+                minAgeMinutes: 3,
+                maxAgeHours: 24
+            });
+            return res.json({
+                ok: true,
+                mode: "SCAN",
+                stats: result
+            });
+        }
+
+        // CASE 2: Single Invoice (Manual Repair)
+        console.log(`[ADMIN RECONCILE] Starting for SINGLE invoice: ${invoiceId}`);
 
         // 1. Get Invoice from 3THIX
         const apiResult = await check3ThixAuthoritative(invoiceId);
@@ -53,7 +66,6 @@ export default async function handler(req, res) {
         }
 
         // 2. Finalize Payment (Updates Sheets, Sends Emails if needed)
-        // 2. Finalize Payment (Updates Sheets, Sends Emails if needed)
         // Updated to use Object Signature
         const result = await finalizeSuccessfulPayment({
             invoiceId,
@@ -65,11 +77,12 @@ export default async function handler(req, res) {
 
         return res.json({
             ok: true,
+            mode: "SINGLE",
             result
         });
 
     } catch (err) {
-        console.error(`[ADMIN RECONCILE ERROR] ${invoiceId}`, err);
+        console.error(`[ADMIN RECONCILE ERROR]`, err);
         return res.status(500).json({ error: err.message });
     }
 }
