@@ -8,12 +8,14 @@ import { getPrice } from "../lib/price.js";
 import { setCors } from "../lib/cors.js";
 
 export default async function handler(req, res) {
+    // 1. HARD CORS GUARD
     setCors(res);
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
+    // 2. Method Check
     if (req.method !== 'GET') {
         return res.status(405).json({ error: "Method not allowed" });
     }

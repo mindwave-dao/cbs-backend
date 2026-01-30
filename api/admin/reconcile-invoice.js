@@ -10,6 +10,7 @@ import { checkFulfillmentStatus } from "../../lib/finalize-payment.js";
 
 import { reconcilePendingInvoices } from "../../lib/reconcile.logic.js";
 import { setCors } from "../../lib/cors.js";
+import { validateEnv } from "../../lib/env.js";
 
 const { WEBHOOK_AUTH_TOKEN, ADMIN_TOKEN } = process.env;
 
@@ -20,15 +21,23 @@ export const config = {
 };
 
 export default async function handler(req, res) {
-    // Strict CORS
+    // 1. HARD CORS GUARD
     setCors(res);
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
+    // 2. Method Check
     if (req.method !== "POST") {
         return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    // 3. Safe Env Check
+    try {
+        validateEnv();
+    } catch (e) {
+        return res.status(500).json({ error: "Server Configuration Error" });
     }
 
     // Security: Check Bearer Token

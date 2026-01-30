@@ -1,18 +1,28 @@
 import { checkPaymentStatusLogic } from "../lib/payment-logic.js";
 import { setCors } from "../lib/cors.js";
+import { validateEnv } from "../lib/env.js";
 
 export default async function handler(req, res) {
+    // 1. HARD CORS GUARD
     setCors(res);
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
+    // 2. Method Check
     if (req.method !== 'GET') {
         return res.status(405).json({
             status: "ERROR",
             message: "Method not allowed. GET only."
         });
+    }
+
+    // 3. Safe Env Check (Optional but good practice)
+    try {
+        validateEnv();
+    } catch (e) {
+        return res.status(500).json({ error: "Server Configuration Error" });
     }
 
     const { invoiceId } = req.query;

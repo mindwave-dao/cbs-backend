@@ -2,6 +2,7 @@ import crypto from "crypto";
 // finalizeSuccessfulPayment removed. Webhook is signal only.
 import { updateTransactionStatus } from "../lib/sheets.logic.js";
 import { setCors } from "../lib/cors.js";
+import { validateEnv } from "../lib/env.js";
 
 const { THIX_WEBHOOK_SECRET, WEBHOOK_AUTH_TOKEN } = process.env;
 
@@ -20,17 +21,26 @@ async function getRawBody(req) {
 }
 
 export default async function handler(req, res) {
+  // 1. HARD CORS GUARD
   setCors(res);
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
+  // 2. Method Check
   if (req.method !== "POST") {
     if (req.method === "GET") {
       return res.status(200).json({ message: "Webhook endpoint. GET ignored." });
     }
     return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  // 3. Env Check
+  try {
+    validateEnv();
+  } catch (e) {
+    return res.status(500).json({ error: "Server Configuration Error" });
   }
 
   try {

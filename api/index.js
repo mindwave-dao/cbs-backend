@@ -3,17 +3,18 @@ import { validateEnv } from "../lib/env.js";
 import { createInvoiceLogic } from "../lib/payment.logic.js";
 import { handle3ThixWebhook } from "../lib/webhook.logic.js";
 import { emailHealthCheck } from "../lib/email.logic.js";
-// import { lookupInvoiceStatus } from "./invoice/status.js"; -- Removed
 
 // Router
 export default async function handler(req, res) {
-    // CORS
+    // 1. HARD CORS GUARD
     setCors(res);
 
+    // 2. OPTIONS MUST EXIT HERE
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
+    // 3. ENV VALIDATION (Safe, inside handler, after OPTIONS)
     try {
         validateEnv();
     } catch (e) {
