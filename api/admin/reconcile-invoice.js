@@ -1,31 +1,22 @@
-import { check3ThixAuthoritative } from "../../lib/payment-logic.js";
-import { normalize3ThixStatus } from "../../lib/payment-logic.js";
-// Note: normalize3ThixStatus is in payment-logic.js (dash) as per Step 190, line 433.
-// Wait, Step 201 shows: import { finalizeSuccessfulPayment, normalize3ThixStatus } from "../../lib/payment.logic.js"; 
-// payment.logic.js (dot) might be just re-exporting or old.
-// centralized `finalize-payment.js` does NOT export normalize3ThixStatus.
-// I should import normalize3ThixStatus from `../../lib/payment-logic.js` (dash) to be safe/direct.
-
-import { checkFulfillmentStatus } from "../../lib/finalize-payment.js";
-
-import { withCors } from "../../lib/withCors.js";
+import { finalizeSuccessfulPayment } from "../../lib/finalize-payment.js";
+import { applyCors } from "../../lib/cors.js";
 
 export const config = {
     api: {
-        bodyParser: true, // We need body parsing for invoiceId
+        bodyParser: true,
     },
 };
 
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
-    if (withCors(req, res)) return;
+    if (applyCors(req, res)) return;
 
     // 2. Method Check
     if (req.method !== "POST") {
         return res.status(405).json({ error: "Method not allowed" });
     }
 
-    // 3. Safe Env Check
+    // 3. Env Validation (Safe import)
     try {
         const { validateEnv } = await import("../../lib/env.js");
         validateEnv();
@@ -46,42 +37,16 @@ export default async function handler(req, res) {
     const { invoiceId } = req.body;
 
     try {
-        // CASE 1: Bulk Scan (Cron Mode)
         if (!invoiceId) {
-            console.log(`[ADMIN RECONCILE] Invoice ID missing. Starting Bulk Scan.`);
-            const result = await reconcilePendingInvoices({
-                minAgeMinutes: 3,
-                maxAgeHours: 24
-            });
-            return res.json({
-                ok: true,
-                mode: "SCAN",
-                stats: result
-            });
+            return res.status(400).json({ error: "Missing invoiceId" });
         }
 
-        // CASE 2: Single Invoice (Manual Repair)
-        console.log(`[ADMIN RECONCILE] Starting for SINGLE invoice: ${invoiceId}`);
+        console.log(`[ADMIN RECONCILE] Starting for invoice: ${invoiceId}`);
 
-        // 1. Get Invoice from 3THIX
-        // Note: finalizeSuccessfulPayment does authoritative check internally!
-        // But user provided pseudo-code: "Query 3THIX... If APPROVED... Upgrade".
-        // finalizeSuccessfulPayment DOES that check.
-        // So we can just call it directly?
-        // User request mandated: "Call finalizeSuccessfulPayment(invoiceId, 'ADMIN_RECONCILE')"
-        // But finalizeSuccessfulPayment returns what?
-        // My implementation returns { success: true/false, reason: ... }
-        // If I just call it, it handles the check.
-
-        // HOWEVER, to return useful status to the caller (Admin), specifically "Why did it fail?", 3Thix check here provides "Reason".
-        // finalizeSuccessfulPayment logic I wrote:
-        // if (!authResult) return reason: THIX_API_FAIL
-        // if (normalizedStatus !== 'SUCCESS') return reason: NOT_PAID
-
-        // So I can JUST call finalizeSuccessfulPayment!
-
-        const result = await checkFulfillmentStatus(invoiceId, "ADMIN_RECONCILE");
-
+        // RECONCILE LOGIC:
+        // Reuse same finalize function.
+        // It handles 3Thix check if payload is missing.
+        const result = await finalizeSuccessfulPayment(invoiceId, null, "ADMIN_RECONCILE");
 
         if (result.status !== 'SUCCESS') {
             return res.status(409).json({
@@ -91,8 +56,6 @@ export default async function handler(req, res) {
                 details: result
             });
         }
-
-        console.log(`[ADMIN RECONCILE] Success for ${invoiceId}`);
 
         return res.json({
             ok: true,
