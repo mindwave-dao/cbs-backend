@@ -1,10 +1,6 @@
 import { getSheetsClient } from "../lib/sheets.logic.js";
 import { check3ThixAuthoritative, normalize3ThixStatus } from "../lib/payment-logic.js";
-import { finalizeSuccessfulPayment } from "../lib/finalize-payment.js";
 import { setCors } from "../lib/cors.js";
-import { validateEnv } from "../lib/env.js";
-
-const { WEBHOOK_AUTH_TOKEN, GOOGLE_SHEET_ID } = process.env;
 
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
@@ -21,10 +17,13 @@ export default async function handler(req, res) {
 
     // 3. Env Check
     try {
+        const { validateEnv } = await import("../lib/env.js");
         validateEnv();
     } catch (e) {
         return res.status(500).json({ error: "Server Configuration Error" });
     }
+
+    const { WEBHOOK_AUTH_TOKEN, GOOGLE_SHEET_ID } = process.env;
 
     // Security Check
     const authHeader = req.headers['authorization'];
@@ -67,7 +66,14 @@ export default async function handler(req, res) {
                     // 4. Upgrade if SUCCESS
                     if (status === 'SUCCESS') {
                         console.log(`[RECONCILIATION] Upgrading ${invoiceId} to SUCCESS`);
-                        const result = await finalizeSuccessfulPayment(invoiceId, 'RECONCILIATION');
+                        try {
+                            const { finalizeSuccessfulPayment } = await import("../lib/finalize-payment.js");
+                            const result = await finalizeSuccessfulPayment(invoiceId, authResult.data, 'ADMIN_RECONCILE');
+                        } catch (e) {
+                            // Handle error if finalizeSuccessfulPayment fails or authResult.data is undefined
+                            console.error(`[RECONCILIATION ERROR] Failed to finalize payment for ${invoiceId}:`, e);
+                            errors.push({ invoiceId, error: e.message });
+                        }
                         reconciled.push({ invoiceId, result: result.status });
                     }
                 }

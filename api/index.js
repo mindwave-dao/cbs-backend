@@ -1,8 +1,7 @@
 import { setCors } from "../lib/cors.js";
-import { validateEnv } from "../lib/env.js";
-import { createInvoiceLogic } from "../lib/payment.logic.js";
-import { handle3ThixWebhook } from "../lib/webhook.logic.js";
-import { emailHealthCheck } from "../lib/email.logic.js";
+
+// Dynamic imports are used inside handler to prevent cold start crashes
+// from blocking OPTIONS requests.
 
 // Router
 export default async function handler(req, res) {
@@ -16,6 +15,7 @@ export default async function handler(req, res) {
 
     // 3. ENV VALIDATION (Safe, inside handler, after OPTIONS)
     try {
+        const { validateEnv } = await import("../lib/env.js");
         validateEnv();
     } catch (e) {
         console.error("ENV ERROR:", e.message);
@@ -31,6 +31,7 @@ export default async function handler(req, res) {
     // Matches /api/create-payment-invoice AND /api/create-invoice (new standard)
     if (path === '/api/create-invoice' || path === '/api/create-payment-invoice') {
         if (req.method !== 'POST') return res.status(405).json({ error: "Method not allowed" });
+        const { createInvoiceLogic } = await import("../lib/payment.logic.js");
         return createInvoiceLogic(req, res);
     }
 
@@ -95,6 +96,7 @@ export default async function handler(req, res) {
 
     // 4. Webhook
     if (path === '/api/webhooks/3thix') {
+        const { handle3ThixWebhook } = await import("../lib/webhook.logic.js");
         return handle3ThixWebhook(req, res);
     }
 
@@ -102,6 +104,7 @@ export default async function handler(req, res) {
     if (path === '/api/email/health') {
         const { email } = req.query;
         try {
+            const { emailHealthCheck } = await import("../lib/email.logic.js");
             const result = await emailHealthCheck(email);
             return res.json({ status: "OK", result });
         } catch (e) {

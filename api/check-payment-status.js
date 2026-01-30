@@ -1,6 +1,4 @@
-import { checkPaymentStatusLogic } from "../lib/payment-logic.js";
 import { setCors } from "../lib/cors.js";
-import { validateEnv } from "../lib/env.js";
 
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
@@ -20,6 +18,7 @@ export default async function handler(req, res) {
 
     // 3. Safe Env Check (Optional but good practice)
     try {
+        const { validateEnv } = await import("../lib/env.js");
         validateEnv();
     } catch (e) {
         return res.status(500).json({ error: "Server Configuration Error" });
@@ -36,6 +35,7 @@ export default async function handler(req, res) {
 
     try {
         // 1. Get Passive Status
+        const { checkPaymentStatusLogic } = await import("../lib/payment-logic.js");
         let result = await checkPaymentStatusLogic(invoiceId);
 
         // 2. Auto-Healing Logic

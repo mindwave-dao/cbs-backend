@@ -8,11 +8,7 @@ import { normalize3ThixStatus } from "../../lib/payment-logic.js";
 
 import { checkFulfillmentStatus } from "../../lib/finalize-payment.js";
 
-import { reconcilePendingInvoices } from "../../lib/reconcile.logic.js";
 import { setCors } from "../../lib/cors.js";
-import { validateEnv } from "../../lib/env.js";
-
-const { WEBHOOK_AUTH_TOKEN, ADMIN_TOKEN } = process.env;
 
 export const config = {
     api: {
@@ -35,10 +31,13 @@ export default async function handler(req, res) {
 
     // 3. Safe Env Check
     try {
+        const { validateEnv } = await import("../../lib/env.js");
         validateEnv();
     } catch (e) {
         return res.status(500).json({ error: "Server Configuration Error" });
     }
+
+    const { WEBHOOK_AUTH_TOKEN, ADMIN_TOKEN } = process.env;
 
     // Security: Check Bearer Token
     const authHeader = req.headers['authorization'];

@@ -1,10 +1,3 @@
-import { getPrice } from "../lib/price.js";
-
-/*
-  GET /api/price
-  Public endpoint to get current NILA price.
-*/
-
 import { setCors } from "../lib/cors.js";
 
 export default async function handler(req, res) {
@@ -21,14 +14,15 @@ export default async function handler(req, res) {
     }
 
     try {
+        const { getPrice } = await import("../lib/price.js");
         const priceData = await getPrice();
-        if (!priceData) {
-            return res.status(503).json({ error: "Price service unavailable" });
+        if (priceData) {
+            return res.status(200).json(priceData);
+        } else {
+            return res.status(500).json({ error: "Failed to fetch price" });
         }
-        res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=30');
-        return res.json(priceData);
     } catch (e) {
-        console.error("[PRICE ENDPOINT ERROR]", e);
-        return res.status(500).json({ error: "Internal Server Error" });
+        return res.status(500).json({ error: e.message });
     }
 }
+```

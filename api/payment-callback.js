@@ -1,10 +1,7 @@
 import crypto from "crypto";
 // finalizeSuccessfulPayment removed. Webhook is signal only.
-import { updateTransactionStatus } from "../lib/sheets.logic.js";
 import { setCors } from "../lib/cors.js";
-import { validateEnv } from "../lib/env.js";
 
-const { THIX_WEBHOOK_SECRET, WEBHOOK_AUTH_TOKEN } = process.env;
 
 export const config = {
   api: {
@@ -38,10 +35,14 @@ export default async function handler(req, res) {
 
   // 3. Env Check
   try {
+    const { validateEnv } = await import("../lib/env.js");
     validateEnv();
   } catch (e) {
     return res.status(500).json({ error: "Server Configuration Error" });
   }
+
+  const WEBHOOK_AUTH_TOKEN = process.env.WEBHOOK_AUTH_TOKEN;
+  const THIX_WEBHOOK_SECRET = process.env.THIX_WEBHOOK_SECRET;
 
   try {
     const authHeader = req.headers['authorization'];
@@ -132,7 +133,9 @@ export default async function handler(req, res) {
 
     if (isFailed) {
       console.log(`[WEBHOOK] Failed event for ${invoiceId}`);
-      await updateTransactionStatus(invoiceId, 'FAILED', {});
+      const { updateTransactionStatus } = await import("../lib/sheets.logic.js");
+      await updateTransactionStatus(invoiceId, status, {
+      });
       return res.status(200).json({ status: 'FAILED' });
     }
 
