@@ -1,12 +1,16 @@
 import { getSheetsClient } from "../lib/sheets.logic.js";
 import { check3ThixAuthoritative, normalize3ThixStatus } from "../lib/payment-logic.js";
 import { finalizeSuccessfulPayment } from "../lib/finalize-payment.js";
-import { applyCors } from "../lib/cors.js";
+import { setCors } from "../lib/cors.js";
 
 const { WEBHOOK_AUTH_TOKEN, GOOGLE_SHEET_ID } = process.env;
 
 export default async function handler(req, res) {
-    if (applyCors(req, res)) return;
+    setCors(res);
+
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
 
     if (req.method !== "POST" && req.method !== "GET") { // Allow GET for browser trigger if needed, but POST prefer
         return res.status(405).json({ error: "Method not allowed" });

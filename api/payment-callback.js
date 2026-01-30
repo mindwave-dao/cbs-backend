@@ -1,7 +1,7 @@
 import crypto from "crypto";
 // finalizeSuccessfulPayment removed. Webhook is signal only.
 import { updateTransactionStatus } from "../lib/sheets.logic.js";
-import { applyCors } from "../lib/cors.js";
+import { setCors } from "../lib/cors.js";
 
 const { THIX_WEBHOOK_SECRET, WEBHOOK_AUTH_TOKEN } = process.env;
 
@@ -20,7 +20,11 @@ async function getRawBody(req) {
 }
 
 export default async function handler(req, res) {
-  if (applyCors(req, res)) return;
+  setCors(res);
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
   if (req.method !== "POST") {
     if (req.method === "GET") {

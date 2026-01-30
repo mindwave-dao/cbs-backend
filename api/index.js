@@ -1,4 +1,4 @@
-import { applyCors } from "../lib/cors.js";
+import { setCors } from "../lib/cors.js";
 import { validateEnv } from "../lib/env.js";
 import { createInvoiceLogic } from "../lib/payment.logic.js";
 import { handle3ThixWebhook } from "../lib/webhook.logic.js";
@@ -8,7 +8,11 @@ import { emailHealthCheck } from "../lib/email.logic.js";
 // Router
 export default async function handler(req, res) {
     // CORS
-    if (applyCors(req, res)) return;
+    setCors(res);
+
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
 
     try {
         validateEnv();

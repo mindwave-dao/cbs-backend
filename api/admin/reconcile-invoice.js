@@ -9,7 +9,7 @@ import { normalize3ThixStatus } from "../../lib/payment-logic.js";
 import { checkFulfillmentStatus } from "../../lib/finalize-payment.js";
 
 import { reconcilePendingInvoices } from "../../lib/reconcile.logic.js";
-import { applyCors } from "../../lib/cors.js";
+import { setCors } from "../../lib/cors.js";
 
 const { WEBHOOK_AUTH_TOKEN, ADMIN_TOKEN } = process.env;
 
@@ -20,8 +20,12 @@ export const config = {
 };
 
 export default async function handler(req, res) {
-    // Basic CORS if needed (though usually admin endpoints might be tighter or same)
-    if (applyCors(req, res)) return;
+    // Strict CORS
+    setCors(res);
+
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
 
     if (req.method !== "POST") {
         return res.status(405).json({ error: "Method not allowed" });

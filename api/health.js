@@ -1,7 +1,11 @@
-import { applyCors } from "../lib/cors.js";
+import { setCors } from "../lib/cors.js";
 
 export default function handler(req, res) {
-  if (applyCors(req, res)) return;
+  setCors(res);
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
   res.status(200).json({
     status: "ok",
