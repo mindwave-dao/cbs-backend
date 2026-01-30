@@ -8,7 +8,7 @@ import { normalize3ThixStatus } from "../../lib/payment-logic.js";
 
 import { checkFulfillmentStatus } from "../../lib/finalize-payment.js";
 
-import { setCorsHeaders } from "../../lib/cors.js";
+import { withCors } from "../../lib/withCors.js";
 
 export const config = {
     api: {
@@ -18,11 +18,7 @@ export const config = {
 
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
-    setCorsHeaders(res);
-
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (withCors(req, res)) return;
 
     // 2. Method Check
     if (req.method !== "POST") {

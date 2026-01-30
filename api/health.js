@@ -1,12 +1,8 @@
-import { setCors } from "../lib/cors.js";
+import { withCors } from "../lib/withCors.js";
 
 export default function handler(req, res) {
   // 1. HARD CORS GUARD
-  setCors(res);
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (withCors(req, res)) return;
 
   res.status(200).json({
     status: "ok",

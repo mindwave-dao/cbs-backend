@@ -1,6 +1,6 @@
 import crypto from "crypto";
 // finalizeSuccessfulPayment removed. Webhook is signal only.
-import { setCorsHeaders } from "../lib/cors.js";
+import { withCors } from "../lib/withCors.js";
 
 
 export const config = {
@@ -70,7 +70,7 @@ export default async function handler(req, res) {
     const digest = hmac.update(rawBodyBuffer).digest('hex');
 
     if (digest !== signature) {
-      console.error(`[WEBHOOK SECURITY] Signature mismatch. Expected: ${digest}, Got: ${signature}`);
+      console.error(`[WEBHOOK SECURITY] Signature mismatch.Expected: ${digest}, Got: ${signature} `);
       return res.status(401).json({ error: "Invalid Signature" });
     }
 
@@ -95,7 +95,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ error: "Missing Invoice ID" });
     }
 
-    const shortId = `...${String(invoiceId).slice(-4)}`;
+    const shortId = `...${String(invoiceId).slice(-4)} `;
     console.log(`[WEBHOOK] Received for invoice ${shortId}`);
 
     const event = payload.event || payload.type || payload.status;
@@ -119,7 +119,7 @@ export default async function handler(req, res) {
       status === "EXPIRED";
 
     if (isSuccess) {
-      console.log(`[WEBHOOK] Success confirmed for ${invoiceId}. Finalizing...`);
+      console.log(`[WEBHOOK] Success confirmed for ${invoiceId}.Finalizing...`);
 
       // Use Shared Finalization Logic
       // This handles: DB Update, Emails (User+Admin), Activity Log
@@ -140,7 +140,7 @@ export default async function handler(req, res) {
     }
 
     // Ignore other events
-    console.log(`[WEBHOOK IGNORE] Event: ${event}, Status: ${status}`);
+    console.log(`[WEBHOOK IGNORE]Event: ${event}, Status: ${status} `);
     return res.status(200).json({ ignored: true });
 
   } catch (err) {

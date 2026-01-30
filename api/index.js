@@ -1,4 +1,4 @@
-import { setCorsHeaders } from "../lib/cors.js";
+import { withCors } from "../lib/withCors.js";
 
 // Dynamic imports are used inside handler to prevent cold start crashes
 // from blocking OPTIONS requests.
@@ -6,12 +6,7 @@ import { setCorsHeaders } from "../lib/cors.js";
 // Router
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
-    setCorsHeaders(res);
-
-    // 2. OPTIONS MUST EXIT HERE
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (withCors(req, res)) return;
 
     // 3. ENV VALIDATION (Safe, inside handler, after OPTIONS)
     try {
