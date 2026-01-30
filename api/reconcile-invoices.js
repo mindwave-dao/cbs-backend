@@ -1,10 +1,10 @@
 import { getSheetsClient } from "../lib/sheets.logic.js";
 import { check3ThixAuthoritative, normalize3ThixStatus } from "../lib/payment-logic.js";
-import { setCors } from "../lib/cors.js";
+import { setCorsHeaders } from "../lib/cors.js";
 
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
-    setCors(res);
+    setCorsHeaders(res);
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();

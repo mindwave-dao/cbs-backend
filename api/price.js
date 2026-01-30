@@ -1,8 +1,8 @@
-import { setCors } from "../lib/cors.js";
+import { setCorsHeaders } from "../lib/cors.js";
 
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
-    setCors(res);
+    setCorsHeaders(res);
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
@@ -25,4 +25,3 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: e.message });
     }
 }
-```

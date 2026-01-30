@@ -1,11 +1,11 @@
 import crypto from "crypto";
 // finalizeSuccessfulPayment removed. Webhook is signal only.
-import { setCors } from "../lib/cors.js";
+import { setCorsHeaders } from "../lib/cors.js";
 
 
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: false, // RAW body needed for HMAC
   },
 };
 
