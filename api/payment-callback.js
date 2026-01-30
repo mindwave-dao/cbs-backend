@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { applyCors } from "../lib/cors.js";
-import { finalizeSuccessfulPayment } from "../lib/finalize-payment.js";
+import { finalizeSuccessfulPayment } from "../lib/payment-logic.js";
 
 export const config = {
   api: {

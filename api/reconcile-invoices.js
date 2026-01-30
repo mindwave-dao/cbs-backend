@@ -1,10 +1,10 @@
 import { getSheetsClient } from "../lib/sheets.logic.js";
-import { check3ThixAuthoritative, normalize3ThixStatus } from "../lib/payment-logic.js";
-import { withCors } from "../lib/withCors.js";
+import { check3ThixAuthoritative, normalize3ThixStatus, finalizeSuccessfulPayment } from "../lib/payment-logic.js";
+import { applyCors } from "../lib/cors.js";
 
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
-    if (withCors(req, res)) return;
+    if (applyCors(req, res)) return;
 
     // 2. Method Check
     if (req.method !== "POST" && req.method !== "GET") { // Allow GET for browser trigger
@@ -63,18 +63,16 @@ export default async function handler(req, res) {
                     if (status === 'SUCCESS') {
                         console.log(`[RECONCILIATION] Upgrading ${invoiceId} to SUCCESS`);
                         try {
-                            const { finalizeSuccessfulPayment } = await import("../lib/finalize-payment.js");
-                            const result = await finalizeSuccessfulPayment(invoiceId, authResult.data, 'ADMIN_RECONCILE');
+                            const result = await finalizeSuccessfulPayment(invoiceId, apiResult.data, 'ADMIN_RECONCILE');
+                            reconciled.push({ invoiceId, result: result.status });
                         } catch (e) {
-                            // Handle error if finalizeSuccessfulPayment fails or authResult.data is undefined
                             console.error(`[RECONCILIATION ERROR] Failed to finalize payment for ${invoiceId}:`, e);
                             errors.push({ invoiceId, error: e.message });
                         }
-                        reconciled.push({ invoiceId, result: result.status });
                     }
                 }
 
-                // Rate limit slightly to avoid hammering API if many
+                // Rate limit slightly
                 await new Promise(resolve => setTimeout(resolve, 200));
 
             } catch (err) {

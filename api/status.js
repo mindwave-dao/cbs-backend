@@ -1,4 +1,4 @@
-import { finalizePaymentStatus } from "../lib/finalize-payment.js";
+import { checkPaymentStatusLogic } from "../lib/payment-logic.js";
 import { applyCors } from "../lib/cors.js";
 
 export default async function handler(req, res) {
@@ -17,7 +17,7 @@ export default async function handler(req, res) {
     }
 
     try {
-        const result = await finalizePaymentStatus(invoiceId);
+        const result = await checkPaymentStatusLogic(invoiceId);
 
         // Ensure result structure matches requirements
         return res.status(200).json(result);

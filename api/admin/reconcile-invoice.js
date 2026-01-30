@@ -1,4 +1,4 @@
-import { finalizeSuccessfulPayment } from "../../lib/finalize-payment.js";
+import { finalizeSuccessfulPayment } from "../../lib/payment-logic.js";
 import { applyCors } from "../../lib/cors.js";
 
 export const config = {
