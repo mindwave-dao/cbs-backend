@@ -1,13 +1,9 @@
 import { finalizePaymentStatus } from "../lib/finalize-payment.js";
-import { withCors } from "../lib/withCors.js";
+import { applyCors } from "../lib/cors.js";
 
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
-    if (withCors(req, res)) return;
-
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (applyCors(req, res)) return;
 
     // 2. Method Check
     if (req.method !== 'GET') {

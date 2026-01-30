@@ -1,4 +1,4 @@
-import { withCors } from "../lib/withCors.js";
+import { applyCors } from "../lib/cors.js";
 
 // Dynamic imports are used inside handler to prevent cold start crashes
 // from blocking OPTIONS requests.
@@ -6,7 +6,7 @@ import { withCors } from "../lib/withCors.js";
 // Router
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
-    if (withCors(req, res)) return;
+    if (applyCors(req, res)) return;
 
     // 3. ENV VALIDATION (Safe, inside handler, after OPTIONS)
     try {
