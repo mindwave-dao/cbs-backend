@@ -1,14 +1,5 @@
 import crypto from "crypto";
 // finalizeSuccessfulPayment removed. Webhook is signal only.
-import { updatePaymentFailed } from "../lib/payment-logic.js"; // or sheets.logic if moved? Check import.
-// Actually updatePaymentFailed is in lib/sheets.logic.js (dot/dash confusion).
-// checking exports from previous view_file. 
-// updatePaymentFailed is in `payment-logic.js` (dash)? No wait.
-// In Step 190 `payment-logic.js` (dash) has exports: `validateWalletAddress`, `detectWalletNetwork`, `check3ThixAuthoritative`, `normalize3ThixStatus`, `finalizeSuccessfulPayment` (OLD), `handlePaymentLogic`.
-// `sheets.logic.js` (Step 192) has: `updateTransactionStatus`... doesn't show `updatePaymentFailed` explicitly exported?
-// Ah, `sheets.logic.js` text in step 192 shows `export async function updatePaymentFailed...` at line 326.
-// So I should import `updatePaymentFailed` from `../lib/sheets.logic.js`.
-
 import { updateTransactionStatus } from "../lib/sheets.logic.js";
 import { applyCors } from "../lib/cors.js";
 
@@ -81,6 +72,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Invalid payload structure" });
     }
 
+    // --- LOGIC START ---
+
     const invoiceId = payload.invoice_id || payload.id || payload.invoice?.id;
     if (!invoiceId) {
       console.error("[WEBHOOK ERROR] Missing Invoice ID in payload");
@@ -88,18 +81,20 @@ export default async function handler(req, res) {
     }
 
     const shortId = `...${String(invoiceId).slice(-4)}`;
-    console.log(`[WEBHOOK] Verified payload for invoice ending in ${shortId}`);
+    console.log(`[WEBHOOK] Received for invoice ${shortId}`);
 
     const event = payload.event || payload.type || payload.status;
     const paymentStatus = payload.payment_status;
     const status = payload.status;
     const invoiceStatus = payload.invoice?.status;
 
+    // Expanded Success Criteria
     const isSuccess =
       event === "ORDER_COMPLETED" ||
       event === "INVOICE_PAID" ||
       status === "PAID" ||
-      paymentStatus === "APPROVED" ||
+      paymentStatus === "APPROVED" || // Some gateways use APPROVED
+      paymentStatus === "PAID" ||
       invoiceStatus === "PAID";
 
     const isFailed =
@@ -109,25 +104,27 @@ export default async function handler(req, res) {
       status === "EXPIRED";
 
     if (isSuccess) {
-      console.log(`[WEBHOOK] Success event detected for ${invoiceId}. Marking AWAITING_FULFILLMENT.`);
-      // STRICT RULE: Webhook never marks SUCCESS. Only AWAITING_FULFILLMENT.
-      await updateTransactionStatus(invoiceId, 'AWAITING_FULFILLMENT', {
-        // We can optionally save metadata here if available, but simplest is state change.
-        // checkFulfillmentStatus will fetch full metadata later.
-      });
-      return res.status(200).json({ status: 'AWAITING_FULFILLMENT' });
+      console.log(`[WEBHOOK] Success confirmed for ${invoiceId}. Finalizing...`);
+
+      // Use Shared Finalization Logic
+      // This handles: DB Update, Emails (User+Admin), Activity Log
+      const { finalizeSuccessfulPayment } = await import("../lib/payment-logic.js");
+
+      // Pass the payload as authoritative data source
+      const result = await finalizeSuccessfulPayment(invoiceId, payload, 'WEBHOOK');
+
+      return res.status(200).json({ status: 'SUCCESS', result });
     }
 
     if (isFailed) {
       console.log(`[WEBHOOK] Failed event for ${invoiceId}`);
-      // Keep minimal logic for failure: Update status to FAILED in sheets
-      // We can use updateTransactionStatus from sheets logic directly
       await updateTransactionStatus(invoiceId, 'FAILED', {});
       return res.status(200).json({ status: 'FAILED' });
     }
 
-    console.log(`[WEBHOOK IGNORE] Event not success/failed. Event: ${event}, Status: ${status}`);
-    return res.status(200).json({ ignored: true, reason: "Status not relevant" });
+    // Ignore other events
+    console.log(`[WEBHOOK IGNORE] Event: ${event}, Status: ${status}`);
+    return res.status(200).json({ ignored: true });
 
   } catch (err) {
     console.error("Payment callback error:", err);
