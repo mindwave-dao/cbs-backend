@@ -1,5 +1,15 @@
 import crypto from "crypto";
-import { handlePaymentLogic } from "../lib/payment.logic.js";
+// finalizeSuccessfulPayment removed. Webhook is signal only.
+import { updatePaymentFailed } from "../lib/payment-logic.js"; // or sheets.logic if moved? Check import.
+// Actually updatePaymentFailed is in lib/sheets.logic.js (dot/dash confusion).
+// checking exports from previous view_file. 
+// updatePaymentFailed is in `payment-logic.js` (dash)? No wait.
+// In Step 190 `payment-logic.js` (dash) has exports: `validateWalletAddress`, `detectWalletNetwork`, `check3ThixAuthoritative`, `normalize3ThixStatus`, `finalizeSuccessfulPayment` (OLD), `handlePaymentLogic`.
+// `sheets.logic.js` (Step 192) has: `updateTransactionStatus`... doesn't show `updatePaymentFailed` explicitly exported?
+// Ah, `sheets.logic.js` text in step 192 shows `export async function updatePaymentFailed...` at line 326.
+// So I should import `updatePaymentFailed` from `../lib/sheets.logic.js`.
+
+import { updateTransactionStatus } from "../lib/sheets.logic.js";
 import { applyCors } from "../lib/cors.js";
 
 const { THIX_WEBHOOK_SECRET, WEBHOOK_AUTH_TOKEN } = process.env;
@@ -21,7 +31,6 @@ async function getRawBody(req) {
 export default async function handler(req, res) {
   if (applyCors(req, res)) return;
 
-  // 1. Accept POST only
   if (req.method !== "POST") {
     if (req.method === "GET") {
       return res.status(200).json({ message: "Webhook endpoint. GET ignored." });
@@ -30,19 +39,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 2. Auth Token Validation (Loose Match)
-    // Check this BEFORE reading body to fail fast if unauthorized
     const authHeader = req.headers['authorization'];
     if (!authHeader || !authHeader.includes(WEBHOOK_AUTH_TOKEN)) {
       console.error("[WEBHOOK SECURITY] Invalid or missing Authorization header");
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // 3. Get Raw Body (Required for HMAC)
     const rawBodyBuffer = await getRawBody(req);
     const rawBodyString = rawBodyBuffer.toString("utf8");
 
-    // 4. HMAC Verification (Section 2 - RAW BODY)
     const signature = req.headers['x-webhook-signature'];
 
     if (!THIX_WEBHOOK_SECRET) {
@@ -58,13 +63,11 @@ export default async function handler(req, res) {
     const hmac = crypto.createHmac('sha256', THIX_WEBHOOK_SECRET);
     const digest = hmac.update(rawBodyBuffer).digest('hex');
 
-    // Timing Safe Compare
     if (digest !== signature) {
       console.error(`[WEBHOOK SECURITY] Signature mismatch. Expected: ${digest}, Got: ${signature}`);
       return res.status(401).json({ error: "Invalid Signature" });
     }
 
-    // 5. Parse JSON (Safe after verification)
     let data;
     try {
       data = JSON.parse(rawBodyString);
@@ -73,70 +76,61 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Invalid JSON" });
     }
 
-    // 6. Safe Logging (Redacted)
-    // Note: data might be wrapped in payload or direct.
     const payload = data.payload || data;
-
-    // Safety check: is payload object?
     if (typeof payload !== 'object') {
       return res.status(400).json({ error: "Invalid payload structure" });
     }
 
     const invoiceId = payload.invoice_id || payload.id || payload.invoice?.id;
-    const shortId = invoiceId ? `...${String(invoiceId).slice(-4)}` : 'UNKNOWN';
+    if (!invoiceId) {
+      console.error("[WEBHOOK ERROR] Missing Invoice ID in payload");
+      return res.status(200).json({ error: "Missing Invoice ID" });
+    }
+
+    const shortId = `...${String(invoiceId).slice(-4)}`;
     console.log(`[WEBHOOK] Verified payload for invoice ending in ${shortId}`);
 
-    // 7. Event/Status Acceptance (Expanded)
-    // Accept: ORDER_COMPLETED, INVOICE_PAID, status=PAID, payment_status=APPROVED
     const event = payload.event || payload.type || payload.status;
     const paymentStatus = payload.payment_status;
     const status = payload.status;
     const invoiceStatus = payload.invoice?.status;
 
-    // Corrected OR-based success condition
     const isSuccess =
       event === "ORDER_COMPLETED" ||
       event === "INVOICE_PAID" ||
       status === "PAID" ||
       paymentStatus === "APPROVED" ||
-      invoiceStatus === "PAID"; // Added invoice.status check
+      invoiceStatus === "PAID";
 
-    // Also handle FAILED
     const isFailed =
       event === "ORDER_FAILED" ||
       status === "FAILED" ||
       status === "CANCELLED" ||
       status === "EXPIRED";
 
-    let internalStatus = null;
-
     if (isSuccess) {
-      internalStatus = 'SUCCESS';
-    } else if (isFailed) {
-      internalStatus = 'FAILED';
-    } else {
-      console.log(`[WEBHOOK IGNORE] Event not success/failed. Event: ${event}, Status: ${status}`);
-      // 200 OK for ignored events (prevents retry loop for non-critical events)
-      return res.status(200).json({ ignored: true, reason: "Status not relevant" });
+      console.log(`[WEBHOOK] Success event detected for ${invoiceId}. Marking AWAITING_FULFILLMENT.`);
+      // STRICT RULE: Webhook never marks SUCCESS. Only AWAITING_FULFILLMENT.
+      await updateTransactionStatus(invoiceId, 'AWAITING_FULFILLMENT', {
+        // We can optionally save metadata here if available, but simplest is state change.
+        // checkFulfillmentStatus will fetch full metadata later.
+      });
+      return res.status(200).json({ status: 'AWAITING_FULFILLMENT' });
     }
 
-    if (!invoiceId) {
-      // If no invoice ID, we can't do anything. 
-      // Return 200 to prevent retry loop for malformed data? 
-      // Or 400? Usually 200 if we can't process it ever.
-      console.error("[WEBHOOK ERROR] Missing Invoice ID in payload");
-      return res.status(200).json({ error: "Missing Invoice ID" });
+    if (isFailed) {
+      console.log(`[WEBHOOK] Failed event for ${invoiceId}`);
+      // Keep minimal logic for failure: Update status to FAILED in sheets
+      // We can use updateTransactionStatus from sheets logic directly
+      await updateTransactionStatus(invoiceId, 'FAILED', {});
+      return res.status(200).json({ status: 'FAILED' });
     }
 
-    // 8. Process Logic
-    // Pass 'WEBHOOK' as source.
-    const result = await handlePaymentLogic(invoiceId, 'WEBHOOK', { ...payload, internalStatusOverride: internalStatus });
-
-    return res.status(200).json(result);
+    console.log(`[WEBHOOK IGNORE] Event not success/failed. Event: ${event}, Status: ${status}`);
+    return res.status(200).json({ ignored: true, reason: "Status not relevant" });
 
   } catch (err) {
     console.error("Payment callback error:", err);
-    // 500 triggers retry
     return res.status(500).json({ error: "Internal Server Error" });
   }
 }

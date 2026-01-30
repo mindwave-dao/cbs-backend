@@ -1,5 +1,13 @@
 import { check3ThixAuthoritative } from "../../lib/payment-logic.js";
-import { finalizeSuccessfulPayment, normalize3ThixStatus } from "../../lib/payment.logic.js";
+import { normalize3ThixStatus } from "../../lib/payment-logic.js";
+// Note: normalize3ThixStatus is in payment-logic.js (dash) as per Step 190, line 433.
+// Wait, Step 201 shows: import { finalizeSuccessfulPayment, normalize3ThixStatus } from "../../lib/payment.logic.js"; 
+// payment.logic.js (dot) might be just re-exporting or old.
+// centralized `finalize-payment.js` does NOT export normalize3ThixStatus.
+// I should import normalize3ThixStatus from `../../lib/payment-logic.js` (dash) to be safe/direct.
+
+import { checkFulfillmentStatus } from "../../lib/finalize-payment.js";
+
 import { reconcilePendingInvoices } from "../../lib/reconcile.logic.js";
 import { applyCors } from "../../lib/cors.js";
 
@@ -20,7 +28,6 @@ export default async function handler(req, res) {
     }
 
     // Security: Check Bearer Token
-    // User mentioned <ADMIN_TOKEN>, checking process.env.ADMIN_TOKEN or fallback to WEBHOOK_AUTH_TOKEN
     const authHeader = req.headers['authorization'];
     const validToken = ADMIN_TOKEN || WEBHOOK_AUTH_TOKEN;
 
@@ -49,29 +56,33 @@ export default async function handler(req, res) {
         console.log(`[ADMIN RECONCILE] Starting for SINGLE invoice: ${invoiceId}`);
 
         // 1. Get Invoice from 3THIX
-        const apiResult = await check3ThixAuthoritative(invoiceId);
+        // Note: finalizeSuccessfulPayment does authoritative check internally!
+        // But user provided pseudo-code: "Query 3THIX... If APPROVED... Upgrade".
+        // finalizeSuccessfulPayment DOES that check.
+        // So we can just call it directly?
+        // User request mandated: "Call finalizeSuccessfulPayment(invoiceId, 'ADMIN_RECONCILE')"
+        // But finalizeSuccessfulPayment returns what?
+        // My implementation returns { success: true/false, reason: ... }
+        // If I just call it, it handles the check.
 
-        if (!apiResult) {
-            return res.status(404).json({ error: "Invoice not found in 3THIX" });
-        }
+        // HOWEVER, to return useful status to the caller (Admin), specifically "Why did it fail?", 3Thix check here provides "Reason".
+        // finalizeSuccessfulPayment logic I wrote:
+        // if (!authResult) return reason: THIX_API_FAIL
+        // if (normalizedStatus !== 'SUCCESS') return reason: NOT_PAID
 
-        const status = normalize3ThixStatus(apiResult.status);
+        // So I can JUST call finalizeSuccessfulPayment!
 
-        if (status !== 'SUCCESS') {
+        const result = await checkFulfillmentStatus(invoiceId, "ADMIN_RECONCILE");
+
+
+        if (result.status !== 'SUCCESS') {
             return res.status(409).json({
-                error: "Invoice not paid",
-                currentStatus: apiResult.status,
-                normalized: status
+                error: "Reconciliation Failed",
+                reason: result.reason,
+                status: result.status,
+                details: result
             });
         }
-
-        // 2. Finalize Payment (Updates Sheets, Sends Emails if needed)
-        // Updated to use Object Signature
-        const result = await finalizeSuccessfulPayment({
-            invoiceId,
-            authoritativeSource: "ADMIN_RECONCILE",
-            thixPayload: apiResult.data || apiResult // apiResult might be the wrapper or data
-        });
 
         console.log(`[ADMIN RECONCILE] Success for ${invoiceId}`);
 

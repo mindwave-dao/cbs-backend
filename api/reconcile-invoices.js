@@ -1,5 +1,6 @@
 import { getSheetsClient } from "../lib/sheets.logic.js";
-import { check3ThixAuthoritative, handlePaymentLogic, normalize3ThixStatus } from "../lib/payment-logic.js";
+import { check3ThixAuthoritative, normalize3ThixStatus } from "../lib/payment-logic.js";
+import { finalizeSuccessfulPayment } from "../lib/finalize-payment.js";
 import { applyCors } from "../lib/cors.js";
 
 const { WEBHOOK_AUTH_TOKEN, GOOGLE_SHEET_ID } = process.env;
@@ -52,7 +53,7 @@ export default async function handler(req, res) {
                     // 4. Upgrade if SUCCESS
                     if (status === 'SUCCESS') {
                         console.log(`[RECONCILIATION] Upgrading ${invoiceId} to SUCCESS`);
-                        const result = await handlePaymentLogic(invoiceId, 'RECONCILIATION', apiResult.data);
+                        const result = await finalizeSuccessfulPayment(invoiceId, 'RECONCILIATION');
                         reconciled.push({ invoiceId, result: result.status });
                     }
                 }
