@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { applyCors } from "../lib/cors.js";
-import { finalizeSuccessfulPayment } from "../lib/payment-logic.js";
+import { finalizeSuccessfulPayment } from "../lib/finalize-payment.js";
+import { updateTransactionStatus } from "../lib/sheets.logic.js";
 
 export const config = {
   api: {
@@ -26,14 +27,11 @@ export default async function handler(req, res) {
   }
 
   // 3. Env Check
-  try {
-    const { validateEnv } = await import("../lib/env.js");
-    validateEnv();
-  } catch (e) {
+  const { WEBHOOK_AUTH_TOKEN, THIX_WEBHOOK_SECRET, THIX_WEBHOOK_URL } = process.env;
+  if (!WEBHOOK_AUTH_TOKEN || !THIX_WEBHOOK_SECRET) {
+    console.error("[WEBHOOK CONFIG] Missing secrets");
     return res.status(500).json({ error: "Server Configuration Error" });
   }
-
-  const { WEBHOOK_AUTH_TOKEN, THIX_WEBHOOK_SECRET } = process.env;
 
   try {
     const authHeader = req.headers['authorization'];
@@ -45,11 +43,6 @@ export default async function handler(req, res) {
     const rawBodyBuffer = await getRawBody(req);
     const rawBodyString = rawBodyBuffer.toString("utf8");
     const signature = req.headers['x-webhook-signature'];
-
-    if (!THIX_WEBHOOK_SECRET) {
-      console.error("[WEBHOOK CONFIG] Missing THIX_WEBHOOK_SECRET");
-      return res.status(500).json({ error: "Server Configuration Error" });
-    }
 
     if (!signature) {
       console.error("[WEBHOOK SECURITY] Missing signature header");
@@ -77,20 +70,22 @@ export default async function handler(req, res) {
     }
 
     // --- LOGIC START ---
+    const correlationId = req.headers['x-vercel-id'] || req.headers['x-request-id'] || `req-${Date.now()}`;
     const invoiceId = payload.invoice_id || payload.id || payload.invoice?.id;
     if (!invoiceId) {
+      console.warn(`[WEBHOOK] [${correlationId}] Missing Invoice ID`);
       return res.status(200).json({ error: "Missing Invoice ID" });
     }
 
-    console.log(`[WEBHOOK] Received for invoice ${invoiceId}`);
+    console.log(`[WEBHOOK] [${correlationId}] Received for invoice ${invoiceId}`);
 
     const event = payload.event || payload.type || payload.status;
     const paymentStatus = payload.payment_status;
     const status = payload.status;
     const invoiceStatus = payload.invoice?.status;
 
-    // Expanded Success Criteria
-    const isSuccess =
+    // Expanded Success Criteria (Triggers Fulfillment Check)
+    const isTrigger =
       event === "ORDER_COMPLETED" ||
       event === "INVOICE_PAID" ||
       status === "PAID" ||
@@ -98,20 +93,43 @@ export default async function handler(req, res) {
       paymentStatus === "PAID" ||
       invoiceStatus === "PAID";
 
-    if (isSuccess) {
-      console.log(`[WEBHOOK] Success confirmed for ${invoiceId}. Finalizing...`);
+    if (isTrigger) {
+      console.log(`[WEBHOOK] [${correlationId}] Trigger confirmed for ${invoiceId}. Marking AWAITING_FULFILLMENT...`);
 
-      // Use Centralized Logic
-      const result = await finalizeSuccessfulPayment(invoiceId, payload, 'WEBHOOK');
-      return res.status(200).json({ status: 'SUCCESS', result });
+      // 1. NON-AUTHORITATIVE UPDATE
+      // We explicitly DO NOT mark as SUCCESS here.
+      // We mark as AWAITING_FULFILLMENT so the frontend (or reconciliation) knows something happened.
+      try {
+        await updateTransactionStatus(invoiceId, 'AWAITING_FULFILLMENT', {
+          // We do NOT update metadata here. We wait for authoritative check.
+        });
+      } catch (err) {
+        console.error(`[WEBHOOK] Failed to set AWAITING_FULFILLMENT:`, err);
+        // Non-fatal. Proceed to trigger verification.
+      }
+
+      // 2. TRIGGER DEFINITIVE CHECK
+      // Fire-and-forget or await?
+      // Better to await to capture logs, but return 200 quickly if possible?
+      // Since function execution time is limited, we await but handle errors gracefully.
+      try {
+        const result = await finalizeSuccessfulPayment(invoiceId, null, 'WEBHOOK');
+        // If result is success, we are good.
+        // If result is !success, it means 3Thix didn't confirm yet. That's fine.
+        console.log(`[WEBHOOK] [${correlationId}] Finalization Result: ${result.status}`);
+        return res.status(200).json({ status: 'PROCESSED', finalization: result.status });
+      } catch (e) {
+        console.error(`[WEBHOOK ERROR] [${correlationId}] Finalization trigger failed: ${e.message}`);
+        return res.status(500).json({ error: "Processing Trigger Failed" });
+      }
     }
 
-    // We only care about SUCCESS in this strict refactor.
-    // Allow clean exit for others.
-    return res.status(200).json({ status: 'IGNORED', message: "Event not processed" });
+    return res.status(200).json({ status: 'IGNORED', message: "Event not a success trigger" });
 
   } catch (err) {
-    console.error("Payment callback error:", err);
+    const correlationId = req.headers['x-vercel-id'] || "unknown";
+    console.error(`[WEBHOOK FATAL] [${correlationId}]`, err);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 }
+

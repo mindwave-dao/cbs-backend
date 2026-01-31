@@ -1,5 +1,5 @@
 import { getSheetsClient } from "../lib/sheets.logic.js";
-import { check3ThixAuthoritative, normalize3ThixStatus, finalizeSuccessfulPayment } from "../lib/payment-logic.js";
+import { finalizeSuccessfulPayment } from "../lib/finalize-payment.js";
 import { applyCors } from "../lib/cors.js";
 
 export default async function handler(req, res) {
@@ -12,14 +12,10 @@ export default async function handler(req, res) {
     }
 
     // 3. Env Check
-    try {
-        const { validateEnv } = await import("../lib/env.js");
-        validateEnv();
-    } catch (e) {
+    const { WEBHOOK_AUTH_TOKEN, GOOGLE_SHEET_ID } = process.env;
+    if (!WEBHOOK_AUTH_TOKEN || !GOOGLE_SHEET_ID) {
         return res.status(500).json({ error: "Server Configuration Error" });
     }
-
-    const { WEBHOOK_AUTH_TOKEN, GOOGLE_SHEET_ID } = process.env;
 
     // Security Check
     const authHeader = req.headers['authorization'];
@@ -43,7 +39,7 @@ export default async function handler(req, res) {
         let checkedCount = 0;
 
         // 2. Filter for pending/processing
-        const targetStatuses = ['CREATED', 'PROCESSING', 'PENDING', 'AWAITING_PAYMENT'];
+        const targetStatuses = ['CREATED', 'PROCESSING', 'PENDING', 'AWAITING_PAYMENT', 'AWAITING_FULFILLMENT'];
         const pendingRows = rows.filter(row => targetStatuses.includes(row[1]));
 
         console.log(`[RECONCILIATION] Found ${pendingRows.length} pending transactions out of ${rows.length} total.`);
@@ -54,22 +50,15 @@ export default async function handler(req, res) {
             checkedCount++;
 
             try {
-                // 3. Check 3THIX Status
-                const apiResult = await check3ThixAuthoritative(invoiceId);
-                if (apiResult) {
-                    const status = normalize3ThixStatus(apiResult.status);
+                // 3. ATTEMPT FINALIZATION (Heals if confirmed paid)
+                // finalizeSuccessfulPayment now internally checks 3Thix status.
+                // If paid -> Returns SUCCESS and updates.
+                // If not paid -> Returns PENDING/FAILED and does nothing.
+                const result = await finalizeSuccessfulPayment(invoiceId, null, 'ADMIN_RECONCILE');
 
-                    // 4. Upgrade if SUCCESS
-                    if (status === 'SUCCESS') {
-                        console.log(`[RECONCILIATION] Upgrading ${invoiceId} to SUCCESS`);
-                        try {
-                            const result = await finalizeSuccessfulPayment(invoiceId, apiResult.data, 'ADMIN_RECONCILE');
-                            reconciled.push({ invoiceId, result: result.status });
-                        } catch (e) {
-                            console.error(`[RECONCILIATION ERROR] Failed to finalize payment for ${invoiceId}:`, e);
-                            errors.push({ invoiceId, error: e.message });
-                        }
-                    }
+                if (result.status === 'SUCCESS') {
+                    reconciled.push({ invoiceId, result: result.status });
+                    console.log(`[RECONCILIATION] Healed ${invoiceId} -> SUCCESS`);
                 }
 
                 // Rate limit slightly
@@ -95,3 +84,4 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: err.message });
     }
 }
+
