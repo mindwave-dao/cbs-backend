@@ -12,10 +12,14 @@ export default async function handler(req, res) {
     }
 
     // 3. Env Check
-    const { WEBHOOK_AUTH_TOKEN, GOOGLE_SHEET_ID } = process.env;
-    if (!WEBHOOK_AUTH_TOKEN || !GOOGLE_SHEET_ID) {
+    try {
+        const { validateEnv } = await import("../lib/env.js");
+        validateEnv();
+    } catch (e) {
         return res.status(500).json({ error: "Server Configuration Error" });
     }
+
+    const { WEBHOOK_AUTH_TOKEN, GOOGLE_SHEET_ID } = process.env;
 
     // Security Check
     const authHeader = req.headers['authorization'];
@@ -39,7 +43,8 @@ export default async function handler(req, res) {
         let checkedCount = 0;
 
         // 2. Filter for pending/processing
-        const targetStatuses = ['CREATED', 'PROCESSING', 'PENDING', 'AWAITING_PAYMENT', 'AWAITING_FULFILLMENT'];
+        // STRICT: Only reconcile CREATED or AWAITING_FULFILLMENT as per architecture rules
+        const targetStatuses = ['CREATED', 'AWAITING_FULFILLMENT'];
         const pendingRows = rows.filter(row => targetStatuses.includes(row[1]));
 
         console.log(`[RECONCILIATION] Found ${pendingRows.length} pending transactions out of ${rows.length} total.`);
@@ -54,7 +59,10 @@ export default async function handler(req, res) {
                 // finalizeSuccessfulPayment now internally checks 3Thix status.
                 // If paid -> Returns SUCCESS and updates.
                 // If not paid -> Returns PENDING/FAILED and does nothing.
-                const result = await finalizeSuccessfulPayment(invoiceId, { source: 'ADMIN_RECONCILE' });
+                const result = await finalizeSuccessfulPayment(invoiceId, {
+                    source: 'ADMIN_RECONCILE',
+                    require3ThixCheck: true
+                });
 
                 if (result.status === 'SUCCESS') {
                     reconciled.push({ invoiceId, result: result.status });

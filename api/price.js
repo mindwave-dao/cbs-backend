@@ -4,6 +4,9 @@ export default async function handler(req, res) {
     // 1. HARD CORS GUARD
     if (applyCors(req, res)) return;
 
+    // Cache Control (60s)
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
+
     // 2. Method Check
     if (req.method !== 'GET') {
         return res.status(405).json({ error: "Method not allowed" });
