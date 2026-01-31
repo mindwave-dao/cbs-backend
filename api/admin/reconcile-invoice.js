@@ -1,4 +1,4 @@
-import { finalizeSuccessfulPayment } from "../../lib/payment-logic.js";
+import { finalizeSuccessfulPayment } from "../../lib/finalize-payment.js";
 import { applyCors } from "../../lib/cors.js";
 
 export const config = {
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
         // RECONCILE LOGIC:
         // Reuse same finalize function.
         // It handles 3Thix check if payload is missing.
-        const result = await finalizeSuccessfulPayment(invoiceId, null, "ADMIN_RECONCILE");
+        const result = await finalizeSuccessfulPayment(invoiceId, { source: "ADMIN_RECONCILE" });
 
         if (result.status !== 'SUCCESS') {
             return res.status(409).json({

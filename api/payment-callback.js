@@ -113,7 +113,7 @@ export default async function handler(req, res) {
       // Better to await to capture logs, but return 200 quickly if possible?
       // Since function execution time is limited, we await but handle errors gracefully.
       try {
-        const result = await finalizeSuccessfulPayment(invoiceId, null, 'WEBHOOK');
+        const result = await finalizeSuccessfulPayment(invoiceId, { source: 'WEBHOOK' });
         // If result is success, we are good.
         // If result is !success, it means 3Thix didn't confirm yet. That's fine.
         console.log(`[WEBHOOK] [${correlationId}] Finalization Result: ${result.status}`);

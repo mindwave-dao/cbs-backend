@@ -54,7 +54,7 @@ export default async function handler(req, res) {
                 // finalizeSuccessfulPayment now internally checks 3Thix status.
                 // If paid -> Returns SUCCESS and updates.
                 // If not paid -> Returns PENDING/FAILED and does nothing.
-                const result = await finalizeSuccessfulPayment(invoiceId, null, 'ADMIN_RECONCILE');
+                const result = await finalizeSuccessfulPayment(invoiceId, { source: 'ADMIN_RECONCILE' });
 
                 if (result.status === 'SUCCESS') {
                     reconciled.push({ invoiceId, result: result.status });
