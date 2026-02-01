@@ -1,5 +1,5 @@
 import { applyCors } from "../lib/cors.js";
-import { checkPaymentStatusLogic } from "../lib/payment-logic.js";
+import { checkPaymentStatusLogic, checkPaymentStatusByTransactionIdLogic } from "../lib/payment-logic.js";
 
 export default async function handler(req, res) {
     // 1. HARD CORS GUARD
@@ -13,19 +13,28 @@ export default async function handler(req, res) {
         });
     }
 
-    const { invoiceId } = req.query;
+    const { invoiceId, transactionId } = req.query;
 
-    if (!invoiceId) {
+    // Require at least one identifier
+    if (!invoiceId && !transactionId) {
         return res.status(400).json({
-            status: "FAILED", // "FAILED" is better than ERROR for frontend state
-            message: "Missing invoiceId"
+            status: "FAILED",
+            message: "Missing invoiceId or transactionId"
         });
     }
 
+    // Determine lookup mode
+    const lookupMode = transactionId ? 'transactionId' : 'invoiceId';
+    const lookupValue = transactionId || invoiceId;
+
     try {
-        // 1. Get Status
-        // checkPaymentStatusLogic imports sheets internally, might throw if DB down
-        let result = await checkPaymentStatusLogic(invoiceId);
+        // 1. Get Status (use appropriate logic function based on lookup mode)
+        let result;
+        if (lookupMode === 'transactionId') {
+            result = await checkPaymentStatusByTransactionIdLogic(transactionId);
+        } else {
+            result = await checkPaymentStatusLogic(invoiceId);
+        }
 
         // Normalize Status for Frontend (Strict List: CREATED, AWAITING_FULFILLMENT, SUCCESS, FAILED)
         let safeStatus = result.status;
@@ -66,11 +75,14 @@ export default async function handler(req, res) {
             const createdTime = new Date(result.createdAt).getTime();
             const now = Date.now();
             if (now - createdTime > 30000) { // 30s
-                console.log(`[AUTO-HEAL] Triggering finalization for ${invoiceId} (stuck > 30s)`);
-                // Fire and forget - do not await
-                import("../lib/finalize-payment.js").then(({ finalizeSuccessfulPayment }) => {
-                    finalizeSuccessfulPayment(invoiceId, { source: 'AUTO_HEAL' }).catch(() => { });
-                });
+                const healInvoiceId = result.invoiceId || invoiceId;
+                if (healInvoiceId) {
+                    console.log(`[AUTO-HEAL] Triggering finalization for ${healInvoiceId} (stuck > 30s)`);
+                    // Fire and forget - do not await
+                    import("../lib/finalize-payment.js").then(({ finalizeSuccessfulPayment }) => {
+                        finalizeSuccessfulPayment(healInvoiceId, { source: 'AUTO_HEAL' }).catch(() => { });
+                    });
+                }
             }
         }
 
@@ -79,8 +91,13 @@ export default async function handler(req, res) {
             status: safeStatus
         });
     } catch (e) {
-        console.error(`[CHECK STATUS ERROR] ${invoiceId}`, e);
-        return res.status(200).json({ status: "CREATED", invoiceId, message: "Status check temporary delay" });
+        console.error(`[CHECK STATUS ERROR] ${lookupMode}=${lookupValue}`, e);
+        return res.status(200).json({
+            status: "CREATED",
+            invoiceId: invoiceId || null,
+            transactionId: transactionId || null,
+            message: "Status check temporary delay"
+        });
     }
 }
 
