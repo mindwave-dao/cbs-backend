@@ -1,6 +1,5 @@
 import { applyCors } from "../lib/cors.js";
 import { findTransaction } from "../lib/sheets.logic.js";
-import { check3ThixStatus } from "../lib/3thix.fulfillment.js";
 import { finalizeSuccessfulPayment } from "../lib/finalize-payment.js";
 
 /**
@@ -8,9 +7,9 @@ import { finalizeSuccessfulPayment } from "../lib/finalize-payment.js";
  * POST /api/verify-payment
  *
  * Purpose:
- * - Used by payment-success.html after return from 3thix
- * - Verifies payment status authoritatively
- * - Triggers finalization if webhook is delayed
+ * - Used by frontend after payment completion
+ * - With new 3thix direct API, payment status is already in DB
+ * - Triggers email finalization if needed
  * - NEVER hard-fails UX
  */
 export default async function handler(req, res) {
@@ -28,7 +27,7 @@ export default async function handler(req, res) {
     if (
         !invoiceId ||
         typeof invoiceId !== "string" ||
-        invoiceId.trim().length < 10
+        invoiceId.trim().length < 5
     ) {
         return res.status(400).json({
             success: false,
@@ -42,6 +41,7 @@ export default async function handler(req, res) {
 
     try {
         // STEP 4: Lookup in Google Sheets (Source of Truth)
+        // With the new 3thix direct payment API, status is already set by createInvoiceLogic
         const tx = await findTransaction(invoiceId);
 
         if (!tx) {
@@ -55,53 +55,26 @@ export default async function handler(req, res) {
             });
         }
 
-        // STEP 5: Idempotency Guard — already finalized
+        // STEP 5: Check status from DB
         if (tx.status === "SUCCESS") {
             console.log(
-                `[VERIFY-PAYMENT:${correlationId}] Already SUCCESS (cached)`
+                `[VERIFY-PAYMENT:${correlationId}] Payment SUCCESS`
             );
 
-            return res.status(200).json({
-                success: true,
-                paymentStatus: "SUCCESS",
-                invoiceId: tx.invoice_id,
-                amount: parseFloat(tx.amount || 0),
-                tokensPurchased: parseFloat(tx.tokens_purchased || 0),
-                tokenPrice: parseFloat(tx.token_price || 0),
-                walletAddress: tx.wallet_address || "",
-                network: tx.wallet_network || "ETH / BSC",
-                message: "Payment confirmed",
-            });
-        }
-
-        // STEP 6: Authoritative Check with 3thix
-        const authResult = await check3ThixStatus(invoiceId);
-
-        console.log(
-            `[VERIFY-PAYMENT:${correlationId}] 3thix status → ${authResult?.status}`
-        );
-
-        // STEP 7: Handle 3thix Result
-        if (authResult?.status === "SUCCESS") {
-            console.log(
-                `[VERIFY-PAYMENT:${correlationId}] 3thix confirms SUCCESS`
-            );
-
-            // STEP 8: Finalize (Idempotent — safe even if webhook already ran)
+            // Trigger finalization to ensure emails are sent
             try {
                 await finalizeSuccessfulPayment(invoiceId, {
-                    source: "RETURN_URL_VERIFY",
-                    rawPayload: authResult?.data,
+                    source: "VERIFY_ENDPOINT",
                 });
             } catch (finalizationError) {
-                // IMPORTANT: Never fail UX — webhook may retry
+                // IMPORTANT: Never fail UX
                 console.error(
                     `[VERIFY-PAYMENT:${correlationId}] Finalization error`,
                     finalizationError
                 );
             }
 
-            // STEP 9: Re-read DB for updated values
+            // Re-read for updated values (tokens, etc)
             const updatedTx = await findTransaction(invoiceId);
 
             return res.status(200).json({
@@ -117,11 +90,8 @@ export default async function handler(req, res) {
             });
         }
 
-        // STEP 10: Pending / Processing
-        if (
-            authResult?.status === "PENDING" ||
-            authResult?.status === "PROCESSING"
-        ) {
+        // STEP 6: Pending status
+        if (tx.status === "PENDING" || tx.status === "CREATED") {
             return res.status(200).json({
                 success: false,
                 paymentStatus: "PENDING",
@@ -130,11 +100,8 @@ export default async function handler(req, res) {
             });
         }
 
-        // STEP 11: Failed / Cancelled
-        if (
-            authResult?.status === "FAILED" ||
-            authResult?.status === "CANCELLED"
-        ) {
+        // STEP 7: Failed status
+        if (tx.status === "FAILED" || tx.status === "CANCELLED") {
             console.warn(
                 `[VERIFY-PAYMENT:${correlationId}] Payment FAILED`
             );
@@ -146,9 +113,9 @@ export default async function handler(req, res) {
             });
         }
 
-        // STEP 12: Unknown → Soft Pending
+        // STEP 8: Unknown status → Treat as pending
         console.warn(
-            `[VERIFY-PAYMENT:${correlationId}] Unknown status ${authResult?.status}`
+            `[VERIFY-PAYMENT:${correlationId}] Unknown status ${tx.status}`
         );
 
         return res.status(200).json({

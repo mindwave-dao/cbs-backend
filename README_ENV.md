@@ -2,14 +2,13 @@
 
 The following environment variables are required for the hardened payment system to function correctly.
 
-## Core API & Webhooks
+## Core API (3thix Direct Payment)
 | Variable | Description | Example |
 |---|---|---|
-| `THIX_API_URL` | Base URL for 3Thix API | `https://api.3thix.com` |
-| `THIX_API_KEY` | API Key for 3Thix | `thix_live_...` |
-| `THIX_WEBHOOK_URL` | The *exact* URL of your Vercel deployment's webhook endpoint | `https://your-project.vercel.app/api/payment-callback` |
-| `THIX_WEBHOOK_SECRET` | Secret used to sign webhook payloads (HMAC-SHA256) | `whsec_...` |
-| `WEBHOOK_AUTH_TOKEN` | Bearer token for webhook authorization | `secret-token-123` |
+| `THIX_API_URL` | Base URL for 3Thix API (optional, defaults to webadmin.3thix.com) | `https://webadmin.3thix.com` |
+| `THIX_API_KEY` | API Key for 3Thix (x-api-key header) | `thix_live_...` |
+| `THIX_MERCHANT_KEY` | Merchant key provided by 3thix | `merchant_abc123` |
+| `THIX_GATEWAY_ID` | Payment gateway ID assigned to merchant | `gateway_xyz789` |
 
 ## Google Sheets
 | Variable | Description | Example |
@@ -22,6 +21,7 @@ The following environment variables are required for the hardened payment system
 |---|---|---|
 | `BREVO_API_KEY` | API Key for Brevo Email Service | `xkeysib-...` |
 | `EMAIL_FROM` | Sender email address | `payments@mindwavedao.com` |
+| `EMAIL_FROM_NAME` | Sender display name | `Mindwave DAO` |
 | `ADMIN_EMAIL` | Admin email for notifications | `admin@mindwavedao.com` |
 | `ADMIN_TOKEN` | Token for protecting admin routes | `admin-secret-123` |
 
@@ -29,8 +29,9 @@ The following environment variables are required for the hardened payment system
 | Variable | Description | Example |
 |---|---|---|
 | `FRONTEND_BASE_URL` | Base URL of the frontend application | `https://buynow.mindwavedao.com` |
-| `PAYMENT_PAGE_BASE` | 3Thix Hosted Payment Page URL | `https://pay.3thix.com` |
 
 ## Notes
 - **CORS**: The system is strictly configured to allow requests from `https://buynow.mindwavedao.com`.
-- **Validation**: Webhooks must have `Authorization: Bearer <WEBHOOK_AUTH_TOKEN>` and a valid `X-Webhook-Signature`.
+- **New API**: The payment system now uses 3thix direct payment API (`/api/payment`) which processes cards directly.
+- **Card Security**: Card numbers are never logged; they are sent directly to 3thix.
+

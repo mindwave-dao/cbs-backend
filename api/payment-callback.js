@@ -1,7 +1,16 @@
+/**
+ * ⚠️ DEPRECATED - This webhook endpoint may no longer be needed.
+ * 
+ * With the new 3thix direct payment API (POST /api/payment),
+ * payments are processed synchronously - no webhook callbacks.
+ * 
+ * Keep this file only if 3thix still sends webhooks for some events.
+ * Otherwise, this endpoint can be safely removed.
+ */
+
 import { applyCors } from "../lib/cors.js";
 import { updateTransactionStatus } from "../lib/sheets.logic.js";
 import { finalizeSuccessfulPayment } from "../lib/finalize-payment.js";
-import { validateEnv } from "../lib/env.js";
 import crypto from "crypto";
 
 export const config = {
