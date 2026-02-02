@@ -33,7 +33,7 @@ The following environment variables are required for the hardened payment system
 ## Crypto Payment Templates (Brevo)
 | Variable | Description | Example |
 |---|---|---|
-| `BREVO_CRYPTO_USER_CONFIRMATION_TEMPLATE_ID` | Template for user acknowledgement (pending) | `5` |
+| `BREVO_CRYPTO_USER_SUBMISSION_TEMPLATE_ID` | Template for user acknowledgement (pending) | `5` |
 | `BREVO_CRYPTO_ADMIN_SUBMISSION_TEMPLATE_ID` | Template for admin notification (new submission) | `6` |
 | `BREVO_CRYPTO_USER_CONFIRMED_TEMPLATE_ID` | Template for user confirmation (approved) | `7` |
 | `BREVO_CRYPTO_ADMIN_CONFIRMED_TEMPLATE_ID` | Template for admin confirmation record | `8` |
