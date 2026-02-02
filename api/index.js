@@ -107,11 +107,33 @@ export default async function handler(req, res) {
         }
     }
 
+    // 6. Price API (for frontend token price display)
+    if (path === '/api/price') {
+        if (req.method !== 'GET') return res.status(405).json({ error: "Method not allowed" });
+        res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
+        try {
+            const { getPrice } = await import("../lib/price.js");
+            const priceData = await getPrice();
+            if (priceData) {
+                return res.status(200).json(priceData);
+            }
+            return res.json({ price: null, source: "coingecko" });
+        } catch (e) {
+            return res.json({ price: null, source: "coingecko", error: e.message });
+        }
+    }
+
     // 6. Crypto Payment Submit (ISOLATED)
     if (path === '/api/crypto/submit') {
         if (req.method !== 'POST') return res.status(405).json({ error: "Method not allowed" });
         const { submitCryptoPayment } = await import("../lib/crypto.logic.js");
         return submitCryptoPayment(req, res);
+    }
+
+    // 7. Admin: Confirm Crypto Payment (ISOLATED from Card Flow)
+    if (path === '/api/admin/crypto/confirm') {
+        const confirmCryptoHandler = await import("./admin/confirm-crypto.js");
+        return confirmCryptoHandler.default(req, res);
     }
 
     return res.status(404).json({ error: 'API route not found' });
