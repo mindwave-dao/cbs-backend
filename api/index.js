@@ -8,19 +8,22 @@ export default async function handler(req, res) {
     // 1. HARD CORS GUARD
     if (applyCors(req, res)) return;
 
-    // 3. ENV VALIDATION (Safe, inside handler, after OPTIONS)
-    try {
-        const { validateEnv } = await import("../lib/env.js");
-        validateEnv();
-    } catch (e) {
-        console.error("ENV ERROR:", e.message);
-        return res.status(500).json({ error: "Server Configuration Error" });
-    }
-
+    // 2. PARSE URL (Early to control validation)
     const url = new URL(req.url, `https://${req.headers.host}`);
     const path = url.pathname;
 
     console.log(`[ROUTER] ${req.method} ${path}`);
+
+    // 3. ENV VALIDATION (Skip for public Price API to avoid hard crash on missing keys)
+    if (path !== '/api/price') {
+        try {
+            const { validateEnv } = await import("../lib/env.js");
+            validateEnv();
+        } catch (e) {
+            console.error("ENV ERROR:", e.message);
+            return res.status(500).json({ error: "Server Configuration Error" });
+        }
+    }
 
     // 1. Create Invoice
     // Matches /api/create-payment-invoice AND /api/create-invoice (new standard)
