@@ -133,6 +133,13 @@ export default async function handler(req, res) {
         return submitCryptoPayment(req, res);
     }
 
+    // 6.5 Crypto Payment Status (Public)
+    if (path === '/api/crypto/status') {
+        if (req.method !== 'POST') return res.status(405).json({ error: "Method not allowed" });
+        const { checkCryptoStatus } = await import("../lib/crypto.logic.js");
+        return checkCryptoStatus(req, res);
+    }
+
     // 7. Admin: Confirm Crypto Payment (ISOLATED from Card Flow)
     if (path === '/api/admin/crypto/confirm') {
         const confirmCryptoHandler = await import("./admin/confirm-crypto.js");
