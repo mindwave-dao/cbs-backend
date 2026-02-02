@@ -30,8 +30,17 @@ The following environment variables are required for the hardened payment system
 |---|---|---|
 | `FRONTEND_BASE_URL` | Base URL of the frontend application | `https://buynow.mindwavedao.com` |
 
+## Crypto Payment Templates (Brevo)
+| Variable | Description | Example |
+|---|---|---|
+| `BREVO_CRYPTO_USER_CONFIRMATION_TEMPLATE_ID` | Template for user acknowledgement (pending) | `5` |
+| `BREVO_CRYPTO_ADMIN_SUBMISSION_TEMPLATE_ID` | Template for admin notification (new submission) | `6` |
+| `BREVO_CRYPTO_USER_CONFIRMED_TEMPLATE_ID` | Template for user confirmation (approved) | `7` |
+| `BREVO_CRYPTO_ADMIN_CONFIRMED_TEMPLATE_ID` | Template for admin confirmation record | `8` |
+
 ## Notes
 - **CORS**: The system is strictly configured to allow requests from `https://buynow.mindwavedao.com`.
 - **New API**: The payment system now uses 3thix direct payment API (`/api/payment`) which processes cards directly.
 - **Card Security**: Card numbers are never logged; they are sent directly to 3thix.
+- **Crypto Admin Endpoint**: Use `POST /api/admin/crypto/confirm` with `x-admin-token` header to confirm crypto payments.
 
