@@ -74,7 +74,8 @@ export default async function handler(req, res) {
             };
 
             // Async/Fire-and-forget emails
-            Promise.all([
+            // UPDATE: Must await in Vercel Serverless or process dies
+            await Promise.all([
                 sendCryptoUserConfirmationEmail(emailParams),
                 sendCryptoAdminConfirmationEmail(emailParams)
             ]).catch(err => console.error("[CRYPTO_UPDATE_EMAIL_ERROR]", err));
