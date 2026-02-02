@@ -1,7 +1,11 @@
 import { authenticateSupportAdmin } from '../../lib/auth.js';
 import { getAllTransactions, appendToAuditLog } from '../../lib/sheets.logic.js';
+import { applyCors } from '../../lib/cors.js';
 
 export default async function handler(req, res) {
+    // Apply CORS
+    if (applyCors(req, res)) return;
+
     if (req.method !== 'GET') {
         return res.status(405).json({ error: "Method not allowed" });
     }

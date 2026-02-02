@@ -1,15 +1,19 @@
-import { authenticateSupportAdmin } from '../../lib/auth.js';
+import { authenticateSupportAdmin } from '../../../lib/auth.js';
 import {
     findCryptoPayment,
     updateCryptoPaymentStatus,
     appendToAuditLog
-} from '../../lib/sheets.logic.js';
+} from '../../../lib/sheets.logic.js';
 import {
     sendCryptoUserConfirmationEmail,
     sendCryptoAdminConfirmationEmail
-} from '../../lib/email.logic.js';
+} from '../../../lib/email.logic.js';
+import { applyCors } from '../../../lib/cors.js';
 
 export default async function handler(req, res) {
+    // Apply CORS
+    if (applyCors(req, res)) return;
+
     if (req.method !== 'POST') {
         return res.status(405).json({ error: "Method not allowed" });
     }
