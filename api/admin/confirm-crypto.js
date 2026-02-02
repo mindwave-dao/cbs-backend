@@ -38,6 +38,9 @@ export default async function handler(req, res) {
 
     // 2. Validate Request Body
     const { txHashLast6, email } = req.body;
+
+    console.log(`[ADMIN_CRYPTO_CONFIRM] Received request for ${email}, Hash: ${txHashLast6}`);
+
     if (!txHashLast6 || !email) {
         return res.status(400).json({ error: "Missing required fields: txHashLast6, email" });
     }
@@ -48,6 +51,7 @@ export default async function handler(req, res) {
         // 3. Find the Crypto Payment
         const payment = await findCryptoPayment(txHashLast6, email);
         if (!payment) {
+            console.warn(`[ADMIN_CRYPTO_CONFIRM] Payment not found for ${email} / ${txHashLast6}`);
             return res.status(404).json({
                 error: "Crypto payment not found",
                 details: "No payment found with the provided txHashLast6 and email"
@@ -56,6 +60,7 @@ export default async function handler(req, res) {
 
         // 4. Check if Already Confirmed
         if (payment.status === "CONFIRMED") {
+            console.warn(`[ADMIN_CRYPTO_CONFIRM] Payment already confirmed for ${email}`);
             return res.status(409).json({
                 error: "Already confirmed",
                 message: "This payment has already been confirmed"
@@ -67,6 +72,7 @@ export default async function handler(req, res) {
         if (!updated) {
             throw new Error("Failed to update payment status in sheet");
         }
+        console.log(`[ADMIN_CRYPTO_CONFIRM] Sheets updated for ${email}`);
 
         // 6. Send Confirmation Emails (Fire & Forget)
         const emailParams = {
@@ -81,6 +87,7 @@ export default async function handler(req, res) {
         };
 
         // Send both emails in parallel, don't block response
+        console.log(`[ADMIN_CRYPTO_CONFIRM] Triggering confirmation emails...`);
         Promise.all([
             sendCryptoUserConfirmationEmail(emailParams),
             sendCryptoAdminConfirmationEmail(emailParams)
