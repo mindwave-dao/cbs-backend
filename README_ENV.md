@@ -30,6 +30,12 @@ The following environment variables are required for the hardened payment system
 |---|---|---|
 | `FRONTEND_BASE_URL` | Base URL of the frontend application | `https://buynow.mindwavedao.com` |
 
+## 3thix Card Payment Templates (Brevo)
+| Variable | Description | Example |
+|---|---|---|
+| `BREVO_3THIX_USER_CONFIRMED_TEMPLATE_ID` | Template for user payment confirmation | `1` |
+| `BREVO_3THIX_ADMIN_CONFIRMED_TEMPLATE_ID` | Template for admin payment notification | `2` |
+
 ## Crypto Payment Templates (Brevo)
 | Variable | Description | Example |
 |---|---|---|
