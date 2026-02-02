@@ -146,5 +146,35 @@ export default async function handler(req, res) {
         return confirmCryptoHandler.default(req, res);
     }
 
+    // ---------------------------------------------------------
+    // 8. SUPPORT ADMIN DASHBOARD (New)
+    // ---------------------------------------------------------
+
+    // Login
+    if (path === '/api/support-admin/login') {
+        const h = await import("./support-admin/login.js");
+        return h.default(req, res);
+    }
+    // Logout
+    if (path === '/api/support-admin/logout') {
+        const h = await import("./support-admin/logout.js");
+        return h.default(req, res);
+    }
+    // Transactions List (Read-Only)
+    if (path === '/api/support-admin/transactions') {
+        const h = await import("./support-admin/transactions.js");
+        return h.default(req, res);
+    }
+    // Crypto Status Update (Write)
+    if (path === '/api/support-admin/crypto/update-status') {
+        const h = await import("./support-admin/crypto/update-status.js");
+        return h.default(req, res);
+    }
+    // Email Logs (Read-Only)
+    if (path === '/api/support-admin/email-logs') {
+        const h = await import("./support-admin/email-logs.js");
+        return h.default(req, res);
+    }
+
     return res.status(404).json({ error: 'API route not found' });
 }
