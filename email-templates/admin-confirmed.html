@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Payment Confirmed - Admin Record</title>
+</head>
+
+<body
+    style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1f2937;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #1f2937;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table role="presentation" width="600" cellspacing="0" cellpadding="0"
+                    style="background-color: #111827; border-radius: 12px; border: 1px solid #374151;">
+
+                    <!-- Header -->
+                    <tr>
+                        <td style="padding: 30px 40px 20px; border-bottom: 1px solid #374151;">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    <td>
+                                        <span
+                                            style="color: #10b981; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">✓
+                                            Confirmed</span>
+                                        <h1 style="margin: 8px 0 0; color: #ffffff; font-size: 24px; font-weight: 600;">
+                                            Payment Verified</h1>
+                                    </td>
+                                    <td align="right" valign="top">
+                                        <span
+                                            style="display: inline-block; background-color: #d1fae5; color: #065f46; padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;">
+                                            CONFIRMED
+                                        </span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Confirmation Record -->
+                    <tr>
+                        <td style="padding: 25px 40px;">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+                                style="background-color: #064e3b; border-radius: 10px; border: 1px solid #10b981;">
+                                <tr>
+                                    <td style="padding: 20px; text-align: center;">
+                                        <p
+                                            style="margin: 0 0 5px; color: #6ee7b7; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">
+                                            Confirmation Record</p>
+                                        <p style="margin: 0; color: #ffffff; font-size: 14px;">
+                                            Crypto payment for <strong>{{ params.email }}</strong> has been confirmed.
+                                        </p>
+                                        <p style="margin: 10px 0 0; color: #a7f3d0; font-size: 12px;">
+                                            Confirmed at: {{ params.confirmed_at }}
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Customer Info -->
+                    <tr>
+                        <td style="padding: 0 40px 25px;">
+                            <h3
+                                style="margin: 0 0 15px; color: #9ca3af; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">
+                                Customer Information</h3>
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    <td style="padding: 10px 0; border-bottom: 1px solid #374151;">
+                                        <span style="color: #6b7280; font-size: 13px;">Name</span><br>
+                                        <span style="color: #ffffff; font-size: 15px; font-weight: 500;">{{
+                                            params.full_name }}</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 10px 0; border-bottom: 1px solid #374151;">
+                                        <span style="color: #6b7280; font-size: 13px;">Email</span><br>
+                                        <a href="mailto:{{ params.email }}"
+                                            style="color: #60a5fa; font-size: 15px; text-decoration: none;">{{
+                                            params.email }}</a>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 10px 0;">
+                                        <span style="color: #6b7280; font-size: 13px;">Wallet Address</span><br>
+                                        <span
+                                            style="color: #ffffff; font-size: 13px; font-family: 'Courier New', monospace; word-break: break-all;">{{
+                                            params.wallet_address }}</span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Transaction Details -->
+                    <tr>
+                        <td style="padding: 0 40px 25px;">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+                                style="background-color: #1f2937; border-radius: 10px; border: 1px solid #374151;">
+                                <tr>
+                                    <td style="padding: 20px;">
+                                        <h3
+                                            style="margin: 0 0 15px; color: #9ca3af; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">
+                                            Transaction Details</h3>
+
+                                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                                            <tr>
+                                                <td width="50%"
+                                                    style="padding: 12px; background-color: #111827; border-radius: 8px 0 0 0;">
+                                                    <span
+                                                        style="color: #6b7280; font-size: 11px; text-transform: uppercase;">Amount</span><br>
+                                                    <span style="color: #10b981; font-size: 22px; font-weight: 700;">${{
+                                                        params.amount }}</span>
+                                                </td>
+                                                <td width="50%"
+                                                    style="padding: 12px; background-color: #111827; border-radius: 0 8px 0 0;">
+                                                    <span
+                                                        style="color: #6b7280; font-size: 11px; text-transform: uppercase;">NILA
+                                                        Tokens</span><br>
+                                                    <span style="color: #a78bfa; font-size: 22px; font-weight: 700;">{{
+                                                        params.estimated_nila_tokens }}</span>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td
+                                                    style="padding: 12px; background-color: #111827; border-radius: 0 0 0 8px;">
+                                                    <span
+                                                        style="color: #6b7280; font-size: 11px; text-transform: uppercase;">Network</span><br>
+                                                    <span style="color: #ffffff; font-size: 15px; font-weight: 500;">{{
+                                                        params.network }}</span>
+                                                </td>
+                                                <td
+                                                    style="padding: 12px; background-color: #111827; border-radius: 0 0 8px 0;">
+                                                    <span
+                                                        style="color: #6b7280; font-size: 11px; text-transform: uppercase;">TX
+                                                        Hash (Last 6)</span><br>
+                                                    <span
+                                                        style="color: #ffffff; font-size: 15px; font-family: monospace;">...{{
+                                                        params.tx_hash_last6 }}</span>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Timeline -->
+                    <tr>
+                        <td style="padding: 0 40px 25px;">
+                            <h3
+                                style="margin: 0 0 15px; color: #9ca3af; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">
+                                Timeline</h3>
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    <td style="padding: 8px 0;">
+                                        <span
+                                            style="display: inline-block; width: 8px; height: 8px; background-color: #6b7280; border-radius: 50%; margin-right: 12px; vertical-align: middle;"></span>
+                                        <span style="color: #6b7280; font-size: 13px;">Submitted: </span>
+                                        <span style="color: #ffffff; font-size: 13px;">{{ params.original_timestamp
+                                            }}</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px 0;">
+                                        <span
+                                            style="display: inline-block; width: 8px; height: 8px; background-color: #10b981; border-radius: 50%; margin-right: 12px; vertical-align: middle;"></span>
+                                        <span style="color: #6b7280; font-size: 13px;">Confirmed: </span>
+                                        <span style="color: #10b981; font-size: 13px; font-weight: 500;">{{
+                                            params.confirmed_at }}</span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 20px 40px; border-top: 1px solid #374151; text-align: center;">
+                            <p style="margin: 0; color: #6b7280; font-size: 12px;">
+                                Mindwave DAO Payment System • Admin Confirmation Record
+                            </p>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+
+</html>

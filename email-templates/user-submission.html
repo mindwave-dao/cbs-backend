@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crypto Payment Submitted - NILA</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7fa;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f7fa;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+          
+          <!-- Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 40px 30px; border-radius: 12px 12px 0 0; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 600;">Payment Submitted</h1>
+              <p style="margin: 10px 0 0; color: rgba(255,255,255,0.9); font-size: 16px;">We've received your crypto payment</p>
+            </td>
+          </tr>
+
+          <!-- Status Badge -->
+          <tr>
+            <td align="center" style="padding: 30px 40px 0;">
+              <span style="display: inline-block; background-color: #fef3c7; color: #92400e; padding: 8px 20px; border-radius: 20px; font-size: 14px; font-weight: 600;">
+                ⏳ PENDING VERIFICATION
+              </span>
+            </td>
+          </tr>
+
+          <!-- Greeting -->
+          <tr>
+            <td style="padding: 30px 40px 20px;">
+              <p style="margin: 0; color: #374151; font-size: 16px; line-height: 1.6;">
+                Hi <strong>{{ params.full_name }}</strong>,
+              </p>
+              <p style="margin: 15px 0 0; color: #6b7280; font-size: 15px; line-height: 1.7;">
+                Thank you for your crypto payment submission. Our team is now verifying your transaction on the blockchain. This typically takes 1-24 hours.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Transaction Details Card -->
+          <tr>
+            <td style="padding: 0 40px 30px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f9fafb; border-radius: 10px; border: 1px solid #e5e7eb;">
+                <tr>
+                  <td style="padding: 25px;">
+                    <h3 style="margin: 0 0 20px; color: #111827; font-size: 16px; font-weight: 600; border-bottom: 1px solid #e5e7eb; padding-bottom: 12px;">
+                      Transaction Details
+                    </h3>
+                    
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                      <tr>
+                        <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Amount:</td>
+                        <td style="padding: 8px 0; color: #111827; font-size: 14px; font-weight: 600; text-align: right;">${{ params.amount }} USD</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Estimated NILA:</td>
+                        <td style="padding: 8px 0; color: #7c3aed; font-size: 14px; font-weight: 600; text-align: right;">{{ params.estimated_nila_tokens }} NILA</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Network:</td>
+                        <td style="padding: 8px 0; color: #111827; font-size: 14px; text-align: right;">{{ params.network }}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">TX Hash (Last 6):</td>
+                        <td style="padding: 8px 0; color: #111827; font-size: 14px; font-family: monospace; text-align: right;">...{{ params.tx_hash_last6 }}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Your Wallet:</td>
+                        <td style="padding: 8px 0; color: #111827; font-size: 12px; font-family: monospace; text-align: right; word-break: break-all;">{{ params.wallet_address }}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- What's Next -->
+          <tr>
+            <td style="padding: 0 40px 30px;">
+              <h3 style="margin: 0 0 15px; color: #111827; font-size: 16px; font-weight: 600;">What happens next?</h3>
+              <ol style="margin: 0; padding-left: 20px; color: #6b7280; font-size: 14px; line-height: 1.8;">
+                <li>Our team will verify your transaction on the blockchain</li>
+                <li>You'll receive a confirmation email once verified</li>
+                <li>NILA tokens will be credited according to platform rules</li>
+              </ol>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f9fafb; padding: 30px 40px; border-radius: 0 0 12px 12px; text-align: center;">
+              <p style="margin: 0 0 10px; color: #6b7280; font-size: 14px;">
+                Questions? Contact us at <a href="mailto:support@mindwavedao.com" style="color: #7c3aed; text-decoration: none;">support@mindwavedao.com</a>
+              </p>
+              <p style="margin: 0; color: #9ca3af; font-size: 12px;">
+                © 2026 Mindwave DAO. All rights reserved.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
