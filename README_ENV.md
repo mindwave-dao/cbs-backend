@@ -2,13 +2,12 @@
 
 The following environment variables are required for the hardened payment system to function correctly.
 
-## Core API (3thix Direct Payment)
+## Core API (3thix Card Payment - Intent Flow)
 | Variable | Description | Example |
 |---|---|---|
 | `THIX_API_URL` | Base URL for 3Thix API (optional, defaults to webadmin.3thix.com) | `https://webadmin.3thix.com` |
-| `THIX_API_KEY` | API Key for 3Thix (x-api-key header) | `thix_live_...` |
-| `THIX_MERCHANT_KEY` | Merchant key provided by 3thix | `merchant_abc123` |
-| `THIX_GATEWAY_ID` | Payment gateway ID assigned to merchant | `gateway_xyz789` |
+| `THIX_PUBLIC_KEY` | Public API Key for 3thix | `yuh0esdx1lu...` |
+| `THIX_SECRET_KEY` | Secret API Key for 3thix | `hi5w2whxjgm...` |
 
 ## Google Sheets
 | Variable | Description | Example |
@@ -46,7 +45,10 @@ The following environment variables are required for the hardened payment system
 
 ## Notes
 - **CORS**: The system is strictly configured to allow requests from `https://buynow.mindwavedao.com`.
-- **New API**: The payment system now uses 3thix direct payment API (`/api/payment`) which processes cards directly.
-- **Card Security**: Card numbers are never logged; they are sent directly to 3thix.
+- **New API**: The payment system now uses 3thix intent-based API (`/api/card/create-intent`) which returns a payment URL for iframe/redirect.
+- **Card Security**: Card data is collected directly by 3thix via their hosted payment page (iframe). No card data touches our servers.
+- **Integration Types**: 
+  - `iframe`: Payment form is embedded in your page. Listen for `postMessage` events for completion.
+  - `url`: User is redirected to 3thix payment page. Requires `success_url` and `cancel_url`.
 - **Crypto Admin Endpoint**: Use `POST /api/admin/crypto/confirm` with `x-admin-token` header to confirm crypto payments.
 

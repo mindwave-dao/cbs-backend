@@ -92,7 +92,14 @@ export default async function handler(req, res) {
         });
     }
 
-    // 4. Webhook
+    // 4. Verify Payment Intent (Called by frontend after postMessage/redirect)
+    // This is the PRIMARY method for payment confirmation with the new intent API
+    if (path === '/api/verify-intent') {
+        const { verifyPaymentIntent } = await import("../lib/verify-intent.js");
+        return verifyPaymentIntent(req, res);
+    }
+
+    // 4b. Webhook (Optional fallback - 3thix may not send webhooks for intent API)
     if (path === '/api/webhooks/3thix') {
         const { handle3ThixWebhook } = await import("../lib/webhook.logic.js");
         return handle3ThixWebhook(req, res);
