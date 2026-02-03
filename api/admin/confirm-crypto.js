@@ -89,13 +89,13 @@ export default async function handler(req, res) {
         // Send both emails in parallel, don't block response?
         // NO: In serverless (Vercel), we MUST await or the function dies and kills the network request.
         console.log(`[ADMIN_CRYPTO_CONFIRM] Triggering confirmation emails...`);
-        await Promise.all([
+
+        await Promise.allSettled([
             sendCryptoUserConfirmationEmail(emailParams),
             sendCryptoAdminConfirmationEmail(emailParams)
-        ]).then(([userRes, adminRes]) => {
-            console.log(`[ADMIN_CRYPTO_CONFIRM] Emails sent - User: ${userRes?.success}, Admin: ${adminRes}`);
-        }).catch(err => {
-            console.error(`[ADMIN_CRYPTO_CONFIRM] Email error: ${err.message}`);
+        ]).then(results => {
+            const [userRes, adminRes] = results;
+            console.log(`[ADMIN_CRYPTO_CONFIRM] Emails settled - User: ${userRes.status}, Admin: ${adminRes.status}`);
         });
 
         // 7. Return Success

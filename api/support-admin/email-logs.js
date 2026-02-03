@@ -1,5 +1,6 @@
 import { authenticateSupportAdmin } from '../../lib/auth.js';
 import { applyCors } from '../../lib/cors.js';
+import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
     // Apply CORS
@@ -16,42 +17,19 @@ export default async function handler(req, res) {
             return res.status(401).json({ error: "Unauthorized" });
         }
 
-        // 2. Fetch from Brevo
-        // Docs: https://developers.brevo.com/reference/get_smtp_emails
-        // Params: limit, offset, startDate, endDate, sort, email
-        const { limit = 20, email } = req.query;
+        // 2. Fetch from Google Sheets (EMAIL_LOGS)
+        const { getEmailLogs } = await import('../../lib/sheets.logic.js');
+        const { limit = 50, email } = req.query;
 
-        const url = new URL('https://api.brevo.com/v3/smtp/emails');
-        url.searchParams.append('limit', limit);
-        url.searchParams.append('sort', 'desc');
-        if (email) url.searchParams.append('email', email);
+        console.log(`[EMAIL_LOGS] Fetching logs for email: ${email || 'ALL'}, limit: ${limit}`);
 
-        const brevoRes = await fetch(url.toString(), {
-            method: 'GET',
-            headers: {
-                'accept': 'application/json',
-                'api-key': process.env.BREVO_API_KEY
-            }
-        });
+        const { logs, error } = await getEmailLogs({ email, limit });
 
-        if (!brevoRes.ok) {
-            console.error(`[BREVO_LOGS_FAIL] ${brevoRes.status}`);
-            return res.status(502).json({ error: "Failed to fetch logs from provider" });
+        if (error) {
+            console.error(`[EMAIL_LOGS_FAIL] Sheets error: ${error}`);
+            // Fallback to empty or error?
+            return res.status(500).json({ error: "Failed to fetch logs from database" });
         }
-
-        const data = await brevoRes.json();
-        const logs = data.transactionalEmails || [];
-
-        // 3. Normalize Response
-        const normalized = logs.map(log => ({
-            messageId: log.messageId,
-            email: log.email,
-            subject: log.subject,
-            status: log.status, // sent, deferred, queued, etc.
-            timestamp: log.date, // ISO string likely
-            event: log.event // delivered, request, etc? Need to check Brevo response structure. 
-            // Brevo returns { ... "date": "...", "subject": "...", "messageId": "...", "email": "...", "status": "..." }
-        }));
 
         // 4. Audit Log
         const { appendToAuditLog } = await import('../../lib/sheets.logic.js');
@@ -63,7 +41,7 @@ export default async function handler(req, res) {
             new Date().toISOString(), "supportadmin", "SUPPORT_ADMIN", "VIEW_EMAIL_LOGS", "BREVO", null, ip
         ]);
 
-        return res.status(200).json({ logs: normalized });
+        return res.status(200).json({ logs });
 
     } catch (e) {
         console.error("[EMAIL_LOGS_ERROR]", e);
